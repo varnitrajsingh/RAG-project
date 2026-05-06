@@ -3,34 +3,59 @@ import sys
 import faiss
 import pickle
 import numpy as np
-from dotenv import load_dotenv
 
 # Fix import path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Use LangChain's embedding wrapper — handles SDK versioning automatically
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from llm import generate_answer
 from cache import get_cache, set_cache
 from hybrid import keyword_search
 
-load_dotenv()
 
-# Initialize embeddings via LangChain wrapper
-embedder = GoogleGenerativeAIEmbeddings(
-    model="models/gemini-embedding-001",
-    google_api_key=os.getenv("GEMINI_API_KEY"),
-    task_type="retrieval_query"
-)
+# ── Lazy embedder init ────────────────────────────────────────────────────────
+_embedder = None
+
+def get_embedder():
+    global _embedder
+    if _embedder is not None:
+        return _embedder
+
+    api_key = None
+    try:
+        import streamlit as st
+        api_key = st.secrets.get("GEMINI_API_KEY")
+    except Exception:
+        pass
+
+    if not api_key:
+        from dotenv import load_dotenv
+        load_dotenv()
+        api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        raise ValueError(
+            "GEMINI_API_KEY not found. "
+            "Set it in Streamlit Secrets (cloud) or a .env file (local)."
+        )
+
+    _embedder = GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        google_api_key=api_key,
+        task_type="retrieval_query",
+    )
+    return _embedder
 
 
+# ── Embedding helper ──────────────────────────────────────────────────────────
 def get_query_embedding(query: str):
     """Returns embedding as a 2D numpy array for FAISS."""
-    vector = embedder.embed_query(query)
+    vector = get_embedder().embed_query(query)
     return np.array([vector], dtype="float32")
 
 
+# ── Main pipeline ─────────────────────────────────────────────────────────────
 def query_pipeline(query: str) -> str:
     # 1. Check cache
     cached = get_cache(query)
@@ -77,7 +102,7 @@ def query_pipeline(query: str) -> str:
     return answer
 
 
-# ── TEST ──────────────────────────────────────────────────────────────────────
+# ── Local test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("🔍 Testing Query Pipeline")
     print("=" * 50)
@@ -85,7 +110,7 @@ if __name__ == "__main__":
     test_queries = [
         "What is BGP and what port does it use?",
         "Explain OSPF shortest path algorithm",
-    ]  
+    ]
 
     for query in test_queries:
         print(f"\n❓ Query: {query}")
