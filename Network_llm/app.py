@@ -1,10 +1,10 @@
 import streamlit as st
 import os
 import sys
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 
 # ── Secret Loader (works locally via .env AND on Streamlit Cloud) ─────────────
-#load_dotenv()
+load_dotenv()
 
 def get_secret(key: str) -> str:
     try:
