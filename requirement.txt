@@ -6,6 +6,7 @@ google-generativeai
 langchain-google-genai
 faiss-cpu
 pypdf2
+pymupdf
 sentence-transformers
 numpy
 tiktoken
