@@ -3,7 +3,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# ── Secret Loader (works locally via .env AND on Streamlit Cloud) ─────────────
 load_dotenv()
 
 def get_secret(key: str) -> str:
@@ -12,234 +11,369 @@ def get_secret(key: str) -> str:
     except (KeyError, FileNotFoundError):
         return os.getenv(key, "")
 
-# ── Inject secrets into environment (so Pipeline files can use os.getenv) ─────
-for _key in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "HUGGINGFACE_API_KEY"]:
+for _key in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "HUGGINGFACE_API_KEY", "GEMINI_API_KEY"]:
     _val = get_secret(_key)
     if _val:
         os.environ[_key] = _val
 
-# ── Ensure required directories exist (important for cold starts on cloud) ────
 os.makedirs("data/uploads", exist_ok=True)
 os.makedirs("vectorstore", exist_ok=True)
 
-# ── Add Pipeline folder to path ───────────────────────────────────────────────
 pipeline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Pipeline")
 sys.path.insert(0, pipeline_path)
 
 from ingest import process_pdf
 from retrieve import query_pipeline
 
-# ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Network Engineer Assistant",
     page_icon="🔧",
     layout="centered"
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
-st.markdown("""
+# ── Theme init ────────────────────────────────────────────────────────────────
+if "theme" not in st.session_state:
+    st.session_state.theme = "dark"
+
+theme = st.session_state.theme
+is_dark = theme == "dark"
+
+# ── Theme Tokens ──────────────────────────────────────────────────────────────
+if is_dark:
+    BG          = "#0d1117"
+    SURFACE     = "#161b22"
+    SURFACE2    = "#1c2128"
+    BORDER      = "#30363d"
+    TEXT        = "#e6edf3"
+    TEXT_MUTED  = "#7d8590"
+    TEXT_FAINT  = "#484f58"
+    ACCENT      = "#2f81f7"
+    ACCENT_GLOW = "rgba(47,129,247,0.18)"
+    SUCCESS_BG  = "rgba(46,160,67,0.15)"
+    SUCCESS_FG  = "#3fb950"
+    SUCCESS_BD  = "rgba(46,160,67,0.3)"
+    INFO_BG     = "rgba(47,129,247,0.12)"
+    INFO_FG     = "#58a6ff"
+    INFO_BD     = "rgba(47,129,247,0.25)"
+    WARN_BG     = "rgba(210,153,34,0.15)"
+    WARN_FG     = "#d29922"
+    WARN_BD     = "rgba(210,153,34,0.3)"
+    ERR_BG      = "rgba(248,81,73,0.15)"
+    ERR_FG      = "#f85149"
+    ERR_BD      = "rgba(248,81,73,0.3)"
+    INPUT_BG    = "#0d1117"
+    SCROLLBAR   = "#30363d"
+    LOGO_FILTER = "drop-shadow(0 0 12px rgba(47,129,247,0.4))"
+else:
+    BG          = "#f6f8fa"
+    SURFACE     = "#ffffff"
+    SURFACE2    = "#f0f3f6"
+    BORDER      = "#d0d7de"
+    TEXT        = "#1f2328"
+    TEXT_MUTED  = "#57606a"
+    TEXT_FAINT  = "#8c959f"
+    ACCENT      = "#0969da"
+    ACCENT_GLOW = "rgba(9,105,218,0.15)"
+    SUCCESS_BG  = "rgba(31,136,61,0.08)"
+    SUCCESS_FG  = "#1a7f37"
+    SUCCESS_BD  = "rgba(31,136,61,0.2)"
+    INFO_BG     = "rgba(9,105,218,0.08)"
+    INFO_FG     = "#0550ae"
+    INFO_BD     = "rgba(9,105,218,0.2)"
+    WARN_BG     = "rgba(154,103,0,0.08)"
+    WARN_FG     = "#7d4e00"
+    WARN_BD     = "rgba(154,103,0,0.2)"
+    ERR_BG      = "rgba(207,34,46,0.08)"
+    ERR_FG      = "#cf222e"
+    ERR_BD      = "rgba(207,34,46,0.2)"
+    INPUT_BG    = "#ffffff"
+    SCROLLBAR   = "#d0d7de"
+    LOGO_FILTER = "drop-shadow(0 0 10px rgba(9,105,218,0.25))"
+
+st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-html, body, [class*="css"] {
+html, body, [class*="css"] {{
     font-family: 'Inter', sans-serif !important;
-}
-.stApp {
-    background: #0f1117;
-    color: #e2e8f0;
-}
-#MainMenu, footer, header { visibility: hidden; }
-.block-container {
-    max-width: 780px !important;
-    padding: 2.5rem 2rem !important;
-}
+}}
+.stApp {{
+    background: {BG};
+    color: {TEXT};
+}}
+#MainMenu, footer, header {{ visibility: hidden; }}
+.block-container {{
+    max-width: 800px !important;
+    padding: 0 1.5rem 3rem 1.5rem !important;
+}}
 
-/* Header */
-.app-header {
+/* ── Theme Toggle ── */
+.theme-bar {{
+    display: flex;
+    justify-content: flex-end;
+    padding: 1rem 0 0 0;
+}}
+.theme-toggle-btn {{
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 9999px;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: {TEXT_MUTED};
+    cursor: pointer;
+    transition: all 0.2s ease;
+    letter-spacing: 0.02em;
+}}
+.theme-toggle-btn:hover {{
+    border-color: {ACCENT};
+    color: {ACCENT};
+    background: {ACCENT_GLOW};
+}}
+
+/* ── Hero Header ── */
+.app-hero {{
     text-align: center;
-    padding: 2rem 0 1.5rem 0;
-    border-bottom: 1px solid #1e2533;
-    margin-bottom: 2rem;
-}
-.app-header .app-logo { font-size: 2.8rem; margin-bottom: 0.5rem; }
-.app-header h1 {
-    font-size: 1.75rem;
+    padding: 2.5rem 1rem 2rem 1rem;
+}}
+.hero-icon {{
+    font-size: 3rem;
+    margin-bottom: 0.75rem;
+    filter: {LOGO_FILTER};
+    display: block;
+}}
+.hero-title {{
+    font-size: 2rem;
     font-weight: 700;
-    color: #f1f5f9;
-    letter-spacing: -0.02em;
-    margin: 0 0 0.4rem 0;
-}
-.app-header p { font-size: 0.9rem; color: #64748b; margin: 0; }
+    color: {TEXT};
+    letter-spacing: -0.03em;
+    margin: 0 0 0.5rem 0;
+    line-height: 1.2;
+}}
+.hero-title span {{
+    background: linear-gradient(135deg, {ACCENT}, {"#79c0ff" if is_dark else "#0969da"});
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}}
+.hero-subtitle {{
+    font-size: 0.925rem;
+    color: {TEXT_MUTED};
+    margin: 0;
+    max-width: 400px;
+    margin-inline: auto;
+    line-height: 1.6;
+}}
 
-/* Section Cards */
-.section-card {
-    background: #161b27;
-    border: 1px solid #1e2533;
+/* ── Divider ── */
+.hero-divider {{
+    height: 1px;
+    background: linear-gradient(to right, transparent, {BORDER}, transparent);
+    margin: 0 0 1.75rem 0;
+    border: none;
+}}
+
+/* ── Section Cards ── */
+.section-card {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
     border-radius: 12px;
-    padding: 1.5rem 1.75rem;
-    margin-bottom: 1.5rem;
-}
-.section-label {
+    padding: 1.25rem 1.5rem 1.5rem 1.5rem;
+    margin-bottom: 1.25rem;
+    box-shadow: {"0 1px 3px rgba(0,0,0,0.3)" if is_dark else "0 1px 3px rgba(0,0,0,0.06)"};
+}}
+.section-label {{
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.75rem;
+    gap: 0.45rem;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #475569;
+    letter-spacing: 0.1em;
+    color: {TEXT_FAINT};
     margin-bottom: 1rem;
-}
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid {BORDER};
+}}
+.section-label .label-count {{
+    margin-left: auto;
+    background: {SURFACE2};
+    color: {TEXT_MUTED};
+    border-radius: 9999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+}}
 
-/* Status Badges */
-.status-badge {
+/* ── Status Badges ── */
+.status-badge {{
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
     font-size: 0.8rem;
     font-weight: 500;
-    padding: 0.35rem 0.75rem;
-    border-radius: 9999px;
-    margin-top: 0.75rem;
-}
-.status-badge.success {
-    background: rgba(16,185,129,0.12);
-    color: #10b981;
-    border: 1px solid rgba(16,185,129,0.2);
-}
-.status-badge.info {
-    background: rgba(59,130,246,0.12);
-    color: #3b82f6;
-    border: 1px solid rgba(59,130,246,0.2);
-}
-.status-badge.warning {
-    background: rgba(245,158,11,0.12);
-    color: #f59e0b;
-    border: 1px solid rgba(245,158,11,0.2);
-}
-.status-badge.error {
-    background: rgba(239,68,68,0.12);
-    color: #ef4444;
-    border: 1px solid rgba(239,68,68,0.2);
-}
+    padding: 0.4rem 0.85rem;
+    border-radius: 8px;
+    margin-top: 0.65rem;
+}}
+.status-badge.success {{ background: {SUCCESS_BG}; color: {SUCCESS_FG}; border: 1px solid {SUCCESS_BD}; }}
+.status-badge.info    {{ background: {INFO_BG};    color: {INFO_FG};    border: 1px solid {INFO_BD}; }}
+.status-badge.warning {{ background: {WARN_BG};    color: {WARN_FG};    border: 1px solid {WARN_BD}; }}
+.status-badge.error   {{ background: {ERR_BG};     color: {ERR_FG};     border: 1px solid {ERR_BD}; }}
 
-/* File Uploader */
-[data-testid="stFileUploader"] {
-    background: #0f1117;
-    border: 1.5px dashed #2d3748;
-    border-radius: 10px;
-    transition: border-color 0.2s ease;
-}
-[data-testid="stFileUploader"]:hover { border-color: #3b82f6; }
-[data-testid="stFileUploader"] label {
-    color: #94a3b8 !important;
+/* ── File Uploader ── */
+[data-testid="stFileUploader"] > div {{
+    background: {SURFACE2} !important;
+    border: 1.5px dashed {BORDER} !important;
+    border-radius: 10px !important;
+    transition: border-color 0.2s ease, background 0.2s ease !important;
+}}
+[data-testid="stFileUploader"] > div:hover {{
+    border-color: {ACCENT} !important;
+    background: {ACCENT_GLOW} !important;
+}}
+[data-testid="stFileUploader"] label,
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] p {{
+    color: {TEXT_MUTED} !important;
     font-size: 0.875rem !important;
-}
-
-/* Text Input */
-[data-testid="stTextInput"] input {
-    background: #0f1117 !important;
-    border: 1.5px solid #1e2533 !important;
-    border-radius: 8px !important;
-    color: #e2e8f0 !important;
-    font-size: 0.9rem !important;
-    padding: 0.6rem 0.9rem !important;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
-}
-[data-testid="stTextInput"] input:focus {
-    border-color: #3b82f6 !important;
-    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
-    outline: none !important;
-}
-[data-testid="stTextInput"] input::placeholder { color: #475569 !important; }
-[data-testid="stTextInput"] label {
-    color: #94a3b8 !important;
+}}
+[data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    color: {TEXT} !important;
     font-size: 0.8rem !important;
-    font-weight: 500 !important;
-}
+    border-radius: 6px !important;
+    padding: 0.3rem 0.9rem !important;
+}}
 
-/* Buttons */
-[data-testid="stFormSubmitButton"] button,
-.stButton > button {
-    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+/* ── Text Input ── */
+[data-testid="stTextInput"] input {{
+    background: {INPUT_BG} !important;
+    border: 1.5px solid {BORDER} !important;
+    border-radius: 8px !important;
+    color: {TEXT} !important;
+    font-size: 0.9rem !important;
+    padding: 0.65rem 1rem !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}}
+[data-testid="stTextInput"] input:focus {{
+    border-color: {ACCENT} !important;
+    box-shadow: 0 0 0 3px {ACCENT_GLOW} !important;
+    outline: none !important;
+}}
+[data-testid="stTextInput"] input::placeholder {{ color: {TEXT_FAINT} !important; }}
+
+/* ── Submit / Main Button ── */
+[data-testid="stFormSubmitButton"] button {{
+    background: {ACCENT} !important;
     color: #ffffff !important;
     border: none !important;
     border-radius: 8px !important;
     font-size: 0.875rem !important;
     font-weight: 600 !important;
-    padding: 0.6rem 1.5rem !important;
+    padding: 0.65rem 1.5rem !important;
     transition: all 0.2s ease !important;
-    letter-spacing: 0.01em !important;
     width: 100% !important;
-}
-[data-testid="stFormSubmitButton"] button:hover,
-.stButton > button:hover {
-    background: linear-gradient(135deg, #1d4ed8, #1e3a8a) !important;
-    box-shadow: 0 4px 15px rgba(37,99,235,0.35) !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 2px 8px {ACCENT_GLOW} !important;
+}}
+[data-testid="stFormSubmitButton"] button:hover {{
+    opacity: 0.88 !important;
+    box-shadow: 0 4px 16px {ACCENT_GLOW} !important;
     transform: translateY(-1px) !important;
-}
+}}
 
-/* Clear History Button */
-.clear-btn button {
+/* ── Clear Button ── */
+.clear-btn > div > button {{
     background: transparent !important;
-    border: 1px solid #2d3748 !important;
-    color: #64748b !important;
+    border: 1px solid {BORDER} !important;
+    color: {TEXT_MUTED} !important;
     width: auto !important;
-    padding: 0.4rem 1rem !important;
-    font-size: 0.8rem !important;
-}
-.clear-btn button:hover {
-    border-color: #ef4444 !important;
-    color: #ef4444 !important;
-    background: rgba(239,68,68,0.08) !important;
+    padding: 0.35rem 1rem !important;
+    font-size: 0.78rem !important;
+    border-radius: 6px !important;
     box-shadow: none !important;
+    transition: all 0.18s ease !important;
+}}
+.clear-btn > div > button:hover {{
+    border-color: {ERR_FG} !important;
+    color: {ERR_FG} !important;
+    background: {ERR_BG} !important;
     transform: none !important;
-}
+    box-shadow: none !important;
+}}
 
-/* Chat Messages */
-[data-testid="stChatMessage"] {
-    background: transparent !important;
-    padding: 0.25rem 0 !important;
-}
+/* ── Chat Messages ── */
+[data-testid="stChatMessage"] {{
+    background: {SURFACE2} !important;
+    border: 1px solid {BORDER} !important;
+    border-radius: 10px !important;
+    padding: 0.75rem 1rem !important;
+    margin-bottom: 0.5rem !important;
+}}
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: #0f1117; }
-::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 99px; }
-::-webkit-scrollbar-thumb:hover { background: #3b82f6; }
+/* ── Spinner ── */
+[data-testid="stSpinner"] {{ color: {ACCENT} !important; }}
 
-hr { border-color: #1e2533 !important; margin: 1.25rem 0 !important; }
+/* ── Scrollbar ── */
+::-webkit-scrollbar {{ width: 5px; }}
+::-webkit-scrollbar-track {{ background: {BG}; }}
+::-webkit-scrollbar-thumb {{ background: {SCROLLBAR}; border-radius: 99px; }}
+::-webkit-scrollbar-thumb:hover {{ background: {ACCENT}; }}
+
+hr {{ border-color: {BORDER} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="app-header">
-    <div class="app-logo">🔧</div>
-    <h1>Network Engineer Assistant</h1>
-    <p>Upload network documentation and query it with natural language</p>
+
+# ── Theme Toggle Button ───────────────────────────────────────────────────────
+col_spacer, col_btn = st.columns([8, 2])
+with col_btn:
+    icon = "☀️ Light" if is_dark else "🌙 Dark"
+    if st.button(icon, key="theme_toggle", use_container_width=False):
+        st.session_state.theme = "light" if is_dark else "dark"
+        st.rerun()
+
+
+# ── Hero Header ───────────────────────────────────────────────────────────────
+st.markdown(f"""
+<div class="app-hero">
+    <span class="hero-icon">🔧</span>
+    <h1 class="hero-title">Network Engineer <span>Assistant</span></h1>
+    <p class="hero-subtitle">Upload network documentation and query it with natural language</p>
 </div>
+<div class="hero-divider"></div>
 """, unsafe_allow_html=True)
+
 
 # ── Upload Section ────────────────────────────────────────────────────────────
 st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">📄 Document</div>', unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], label_visibility="collapsed")
+uploaded_file = st.file_uploader(
+    "Upload PDF",
+    type=["pdf"],
+    label_visibility="collapsed"
+)
 
 if uploaded_file:
     file_path = f"data/uploads/{uploaded_file.name}"
-
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
 
     st.markdown(
-        f'<div class="status-badge success">✓ Uploaded: {uploaded_file.name}</div>',
+        f'<div class="status-badge success">✓ Uploaded: <strong>{uploaded_file.name}</strong></div>',
         unsafe_allow_html=True
     )
 
     if st.session_state.get("last_uploaded") != uploaded_file.name:
-        with st.spinner("Building index…"):
+        with st.spinner("Building vector index…"):
             try:
                 process_pdf(file_path)
                 st.session_state["last_uploaded"] = uploaded_file.name
@@ -254,11 +388,12 @@ if uploaded_file:
                 )
     else:
         st.markdown(
-            '<div class="status-badge info">ℹ Already indexed</div>',
+            '<div class="status-badge info">ℹ Already indexed — ready to query</div>',
             unsafe_allow_html=True
         )
 
 st.markdown('</div>', unsafe_allow_html=True)
+
 
 # ── Chat Section ──────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
@@ -278,7 +413,7 @@ with st.form(key="query_form", clear_on_submit=True):
 if submitted and query.strip():
     if st.session_state.get("last_uploaded") is None:
         st.markdown(
-            '<div class="status-badge warning">⚠ Upload a PDF document first</div>',
+            '<div class="status-badge warning">⚠ Upload and process a PDF first</div>',
             unsafe_allow_html=True
         )
     else:
@@ -299,13 +434,15 @@ elif submitted and not query.strip():
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# ── Chat History ──────────────────────────────────────────────────────────────
+
+# ── Conversation History ──────────────────────────────────────────────────────
 if st.session_state.history:
+    turn_count = len(st.session_state.history)
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="section-label">🗂 Conversation History '
-        f'<span style="margin-left:auto;color:#3b82f6;font-size:0.7rem;">'
-        f'{len(st.session_state.history)} turn(s)</span></div>',
+        f'<div class="section-label">🗂 Conversation'
+        f'<span class="label-count">{turn_count} turn{"s" if turn_count != 1 else ""}</span>'
+        f'</div>',
         unsafe_allow_html=True
     )
 
