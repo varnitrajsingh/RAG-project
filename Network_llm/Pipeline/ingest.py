@@ -71,7 +71,7 @@ def get_embeddings(texts: list[str], batch_size: int = 90) -> list[list[float]]:
         print(f"  [API] Embedding batch {i // batch_size + 1} / {-(-len(texts) // batch_size)}...")
 
         # text-embedding-004 is the latest, most stable model for free tier
-        result = _embed_with_retry(client, "text-embedding-004", batch)
+        result = _embed_with_retry(client, "text-embedding-001", batch)
         
         all_embeddings.extend([e.values for e in result.embeddings])
 
