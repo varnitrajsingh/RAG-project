@@ -1,6 +1,6 @@
 import os
+import re
 import time
-import pickle
 import numpy as np
 import faiss
 from dotenv import load_dotenv
@@ -11,11 +11,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from google import genai
 from google.api_core import exceptions
 
-# ── Directory Setup ──────────────────────────────────────────────────────────
 os.makedirs("vectorstore", exist_ok=True)
 os.makedirs("data/uploads", exist_ok=True)
 
-# ── Lazy Client Initialization ───────────────────────────────────────────────
 _client = None
 
 def get_client():
@@ -24,99 +22,125 @@ def get_client():
         return _client
 
     api_key = None
-    # 1. Try Streamlit Secrets
     try:
         import streamlit as st
         api_key = st.secrets.get("GEMINI_API_KEY")
     except Exception:
         pass
 
-    # 2. Try .env file
     if not api_key:
         load_dotenv()
         api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY not found. "
-            "Set it in Streamlit Secrets (cloud) or a .env file (local)."
-        )
+        raise ValueError("GEMINI_API_KEY not found.")
 
     _client = genai.Client(api_key=api_key)
     return _client
 
-# ── Robust Embedding Logic (Free Tier Friendly) ──────────────────────────────
-@retry(
-    retry=retry_if_exception_type((exceptions.ResourceExhausted, exceptions.ServiceUnavailable)),
-    wait=wait_exponential(multiplier=2, min=5, max=60),
-    stop=stop_after_attempt(7)
-)
-def _embed_with_retry(client, model, contents):
-    """Internal helper to call Gemini with automatic retries for 429 errors."""
-    return client.models.embed_content(
-        model=model,
-        contents=contents,
-    )
 
-def get_embeddings(texts: list[str], batch_size: int = 90) -> list[list[float]]:
+def _safe_truncate(text: str, max_bytes: int = 9900) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def _parse_retry_delay(error: Exception, default: float = 60.0) -> float:
+    """Extract the suggested retry delay (in seconds) from a 429 error message."""
+    match = re.search(r"retry[^\d]*(\d+(?:\.\d+)?)\s*s", str(error), re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 2.0  # small buffer on top
+    return default
+
+
+def _embed_one(client, text: str) -> list[float]:
+    """Single embed call — no tenacity here, we handle 429 manually below."""
+    result = client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=text,
+    )
+    return result.embeddings[0].values
+
+
+def get_embeddings(
+    texts: list[str],
+    rpm_limit: int = 90,       # stay ~10% under the 100 RPM cap
+    max_retries: int = 5,
+) -> list[list[float]]:
     """
-    Embed texts in batches. 
-    Batch size 90 is used to stay under the 100-item-per-call limit.
+    Embeds texts one-by-one with:
+    - Proactive throttling (stay under RPM cap)
+    - Reactive backoff (respect the exact retry-after delay from 429 errors)
     """
     client = get_client()
+    min_delay = 60.0 / rpm_limit  # ~0.67s between requests at 90 RPM
     all_embeddings = []
 
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        print(f"  [API] Embedding batch {i // batch_size + 1} / {-(-len(texts) // batch_size)}...")
+    for i, text in enumerate(texts):
+        safe_text = _safe_truncate(text)
+        attempt = 0
 
-        # text-embedding-004 is the latest, most stable model for free tier
-        result = _embed_with_retry(client, "text-embedding-001", batch)
-        
-        all_embeddings.extend([e.values for e in result.embeddings])
+        while True:
+            try:
+                print(f"  [API] Embedding {i + 1}/{len(texts)}...")
+                embedding = _embed_one(client, safe_text)
+                all_embeddings.append(embedding)
 
-        # 1.5s sleep ensures we stay well below the 100 Requests Per Minute (RPM) limit
-        if i + batch_size < len(texts):
-            time.sleep(1.5)
+                # Proactive throttle after every successful call
+                if i < len(texts) - 1:
+                    time.sleep(min_delay)
+                break
+
+            except exceptions.ResourceExhausted as e:
+                attempt += 1
+                if attempt > max_retries:
+                    raise RuntimeError(f"Exceeded {max_retries} retries on chunk {i + 1}.") from e
+
+                wait = _parse_retry_delay(e)
+                print(f"  [429] Rate limit hit on chunk {i + 1}. Waiting {wait:.1f}s (attempt {attempt}/{max_retries})...")
+                time.sleep(wait)
+
+            except exceptions.ServiceUnavailable as e:
+                attempt += 1
+                if attempt > max_retries:
+                    raise
+                wait = min(5 * (2 ** attempt), 60)
+                print(f"  [503] Service unavailable. Retrying in {wait}s...")
+                time.sleep(wait)
 
     return all_embeddings
 
-# ── FAISS Indexing Logic ─────────────────────────────────────────────────────
+
 def _build_index_from_chunks(
     chunks: list[str],
-    index: faiss.IndexFlatL2 | None,
-    embed_batch_size: int = 90,
-    index_batch_size: int = 450,
+    index_batch_size: int = 200,
+    rpm_limit: int = 90,
 ) -> faiss.IndexFlatL2:
-    """
-    Groups chunks, fetches embeddings, and adds them to the FAISS index.
-    """
-    for start in range(0, len(chunks), index_batch_size):
-        batch_chunks = chunks[start : start + index_batch_size]
-        print(f"📦 Indexing group: {start + 1} to {start + len(batch_chunks)} of {len(chunks)}...")
+    index = None
 
-        embeddings = get_embeddings(batch_chunks, batch_size=embed_batch_size)
+    for start in range(0, len(chunks), index_batch_size):
+        batch = chunks[start : start + index_batch_size]
+        print(f"\n📦 Indexing chunks {start + 1}–{start + len(batch)} of {len(chunks)}...")
+
+        embeddings = get_embeddings(batch, rpm_limit=rpm_limit)
         embeddings_np = np.array(embeddings, dtype=np.float32)
 
         if index is None:
-            dim = embeddings_np.shape[1]
-            index = faiss.IndexFlatL2(dim)
+            index = faiss.IndexFlatL2(embeddings_np.shape[1])
 
         index.add(embeddings_np)
 
     return index
 
-# ── Main PDF Processor ───────────────────────────────────────────────────────
+
 def process_pdf(
     file_path: str,
-    embed_batch_size: int = 90,
-    index_batch_size: int = 450,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
+    chunk_size: int = 800,
+    chunk_overlap: int = 150,
+    index_batch_size: int = 200,
+    rpm_limit: int = 90,
 ) -> tuple[list[str], faiss.IndexFlatL2]:
-    """
-    Full pipeline: Load PDF -> Split -> Embed -> Index.
-    """
     print(f"📖 Loading PDF: {file_path}")
     loader = PyMuPDFLoader(file_path)
     docs = loader.load()
@@ -128,22 +152,10 @@ def process_pdf(
     chunks = splitter.split_documents(docs)
     texts = [c.page_content for c in chunks]
 
-    print(f"✂️ Created {len(texts)} chunks. Starting the embedding process...")
-    
-    index = _build_index_from_chunks(
-        texts, 
-        None, 
-        embed_batch_size=embed_batch_size,
-        index_batch_size=index_batch_size
-    )
+    est_min = len(texts) / rpm_limit
+    print(f"✂️  {len(texts)} chunks created. Estimated time: ~{est_min:.1f} min")
+
+    index = _build_index_from_chunks(texts, index_batch_size=index_batch_size, rpm_limit=rpm_limit)
 
     print("✅ Indexing complete.")
     return texts, index
-
-# ── Execution Block ──────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Example usage:
-    # pdf_path = "data/uploads/your_large_file.pdf"
-    # texts, index = process_pdf(pdf_path)
-    # faiss.write_index(index, "vectorstore/index.faiss")
-    pass
