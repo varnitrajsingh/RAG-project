@@ -31,14 +31,12 @@ st.set_page_config(
     layout="centered"
 )
 
-# ── Theme init ────────────────────────────────────────────────────────────────
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
 
 theme = st.session_state.theme
 is_dark = theme == "dark"
 
-# ── Theme Tokens ──────────────────────────────────────────────────────────────
 if is_dark:
     BG          = "#0d1117"
     SURFACE     = "#161b22"
@@ -64,6 +62,8 @@ if is_dark:
     INPUT_BG    = "#0d1117"
     SCROLLBAR   = "#30363d"
     LOGO_FILTER = "drop-shadow(0 0 12px rgba(47,129,247,0.4))"
+    GRADIENT_A  = "#2f81f7"
+    GRADIENT_B  = "#79c0ff"
 else:
     BG          = "#f6f8fa"
     SURFACE     = "#ffffff"
@@ -89,10 +89,12 @@ else:
     INPUT_BG    = "#ffffff"
     SCROLLBAR   = "#d0d7de"
     LOGO_FILTER = "drop-shadow(0 0 10px rgba(9,105,218,0.25))"
+    GRADIENT_A  = "#0969da"
+    GRADIENT_B  = "#0550ae"
 
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 html, body, [class*="css"] {{
     font-family: 'Inter', sans-serif !important;
@@ -107,34 +109,7 @@ html, body, [class*="css"] {{
     padding: 0 1.5rem 3rem 1.5rem !important;
 }}
 
-/* ── Theme Toggle ── */
-.theme-bar {{
-    display: flex;
-    justify-content: flex-end;
-    padding: 1rem 0 0 0;
-}}
-.theme-toggle-btn {{
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 9999px;
-    padding: 0.35rem 0.9rem;
-    font-size: 0.78rem;
-    font-weight: 500;
-    color: {TEXT_MUTED};
-    cursor: pointer;
-    transition: all 0.2s ease;
-    letter-spacing: 0.02em;
-}}
-.theme-toggle-btn:hover {{
-    border-color: {ACCENT};
-    color: {ACCENT};
-    background: {ACCENT_GLOW};
-}}
-
-/* ── Hero Header ── */
+/* ── Hero ── */
 .app-hero {{
     text-align: center;
     padding: 2.5rem 1rem 2rem 1rem;
@@ -154,26 +129,63 @@ html, body, [class*="css"] {{
     line-height: 1.2;
 }}
 .hero-title span {{
-    background: linear-gradient(135deg, {ACCENT}, {"#79c0ff" if is_dark else "#0969da"});
+    background: linear-gradient(135deg, {GRADIENT_A}, {GRADIENT_B});
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }}
 .hero-subtitle {{
-    font-size: 0.925rem;
+    font-size: 0.95rem;
     color: {TEXT_MUTED};
-    margin: 0;
-    max-width: 400px;
-    margin-inline: auto;
-    line-height: 1.6;
+    margin: 0 auto;
+    line-height: 1.5;
+    white-space: nowrap;
 }}
-
-/* ── Divider ── */
 .hero-divider {{
     height: 1px;
     background: linear-gradient(to right, transparent, {BORDER}, transparent);
-    margin: 0 0 1.75rem 0;
+    margin: 0 0 1.5rem 0;
     border: none;
+}}
+
+/* ── CRITICAL: Kill the empty label gap above file uploader ── */
+[data-testid="stFileUploader"] {{
+    margin-top: 0 !important;
+}}
+[data-testid="stFileUploader"] > label {{
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}}
+[data-testid="stFileUploader"] > div:first-of-type {{
+    margin-top: 0 !important;
+}}
+
+/* ── File Uploader Dropzone ── */
+[data-testid="stFileUploader"] > div {{
+    background: {SURFACE2} !important;
+    border: 1.5px dashed {BORDER} !important;
+    border-radius: 10px !important;
+    transition: border-color 0.2s ease, background 0.2s ease !important;
+}}
+[data-testid="stFileUploader"] > div:hover {{
+    border-color: {ACCENT} !important;
+    background: {ACCENT_GLOW} !important;
+}}
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] p {{
+    color: {TEXT_MUTED} !important;
+    font-size: 0.875rem !important;
+}}
+[data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {{
+    background: {SURFACE} !important;
+    border: 1px solid {BORDER} !important;
+    color: {TEXT} !important;
+    font-size: 0.8rem !important;
+    border-radius: 6px !important;
+    padding: 0.3rem 0.9rem !important;
 }}
 
 /* ── Section Cards ── */
@@ -226,32 +238,6 @@ html, body, [class*="css"] {{
 .status-badge.warning {{ background: {WARN_BG};    color: {WARN_FG};    border: 1px solid {WARN_BD}; }}
 .status-badge.error   {{ background: {ERR_BG};     color: {ERR_FG};     border: 1px solid {ERR_BD}; }}
 
-/* ── File Uploader ── */
-[data-testid="stFileUploader"] > div {{
-    background: {SURFACE2} !important;
-    border: 1.5px dashed {BORDER} !important;
-    border-radius: 10px !important;
-    transition: border-color 0.2s ease, background 0.2s ease !important;
-}}
-[data-testid="stFileUploader"] > div:hover {{
-    border-color: {ACCENT} !important;
-    background: {ACCENT_GLOW} !important;
-}}
-[data-testid="stFileUploader"] label,
-[data-testid="stFileUploader"] span,
-[data-testid="stFileUploader"] p {{
-    color: {TEXT_MUTED} !important;
-    font-size: 0.875rem !important;
-}}
-[data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {{
-    background: {SURFACE} !important;
-    border: 1px solid {BORDER} !important;
-    color: {TEXT} !important;
-    font-size: 0.8rem !important;
-    border-radius: 6px !important;
-    padding: 0.3rem 0.9rem !important;
-}}
-
 /* ── Text Input ── */
 [data-testid="stTextInput"] input {{
     background: {INPUT_BG} !important;
@@ -268,8 +254,14 @@ html, body, [class*="css"] {{
     outline: none !important;
 }}
 [data-testid="stTextInput"] input::placeholder {{ color: {TEXT_FAINT} !important; }}
+[data-testid="stTextInput"] > label {{
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}}
 
-/* ── Submit / Main Button ── */
+/* ── Submit Button ── */
 [data-testid="stFormSubmitButton"] button {{
     background: {ACCENT} !important;
     color: #ffffff !important;
@@ -318,9 +310,6 @@ html, body, [class*="css"] {{
     margin-bottom: 0.5rem !important;
 }}
 
-/* ── Spinner ── */
-[data-testid="stSpinner"] {{ color: {ACCENT} !important; }}
-
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {{ width: 5px; }}
 ::-webkit-scrollbar-track {{ background: {BG}; }}
@@ -332,11 +321,10 @@ hr {{ border-color: {BORDER} !important; }}
 """, unsafe_allow_html=True)
 
 
-# ── Theme Toggle Button ───────────────────────────────────────────────────────
-col_spacer, col_btn = st.columns([8, 2])
+# ── Theme Toggle ──────────────────────────────────────────────────────────────
+_, col_btn = st.columns([7, 1])
 with col_btn:
-    icon = "☀️ Light" if is_dark else "🌙 Dark"
-    if st.button(icon, key="theme_toggle", use_container_width=False):
+    if st.button("☀️" if is_dark else "🌙", key="theme_toggle", help="Toggle theme"):
         st.session_state.theme = "light" if is_dark else "dark"
         st.rerun()
 
@@ -357,9 +345,9 @@ st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">📄 Document</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
-    "Upload PDF",
+    "x",  # non-empty string required by Streamlit but hidden via CSS
     type=["pdf"],
-    label_visibility="collapsed"
+    label_visibility="hidden"
 )
 
 if uploaded_file:
@@ -404,9 +392,9 @@ st.markdown('<div class="section-label">💬 Ask a Question</div>', unsafe_allow
 
 with st.form(key="query_form", clear_on_submit=True):
     query = st.text_input(
-        "Question",
+        "q",  # hidden via CSS
         placeholder="e.g. What port does BGP use?",
-        label_visibility="collapsed"
+        label_visibility="hidden"
     )
     submitted = st.form_submit_button("Send Message →")
 
