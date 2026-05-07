@@ -341,7 +341,7 @@ st.markdown(f"""
 
 
 # ── Upload Section ────────────────────────────────────────────────────────────
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
+#st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">📄 Document</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
@@ -387,7 +387,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 if "history" not in st.session_state:
     st.session_state.history = []
 
-st.markdown('<div class="section-card">', unsafe_allow_html=True)
+#st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">💬 Ask a Question</div>', unsafe_allow_html=True)
 
 with st.form(key="query_form", clear_on_submit=True):
@@ -426,7 +426,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ── Conversation History ──────────────────────────────────────────────────────
 if st.session_state.history:
     turn_count = len(st.session_state.history)
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    #st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown(
         f'<div class="section-label">🗂 Conversation'
         f'<span class="label-count">{turn_count} turn{"s" if turn_count != 1 else ""}</span>'
