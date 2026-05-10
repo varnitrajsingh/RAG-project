@@ -11,4 +11,3 @@ sentence-transformers
 numpy
 tiktoken
 tenacity
-sentence-transformers
