@@ -49,18 +49,33 @@ def get_embedder():
 
 
 # ── Embedding helper ──────────────────────────────────────────────────────────
-def get_query_embedding(query: str):
-    """Returns embedding as a 2D numpy array for FAISS."""
-    vector = get_embedder().embed_query(query)
-    return np.array([vector], dtype="float32")
+from sentence_transformers import SentenceTransformer
 
+_embedder = None
+
+def get_embedder():
+    global _embedder
+    if _embedder is None:
+        print("🔄 Loading embedding model...")
+        _embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        print("✅ Embedding model loaded.")
+    return _embedder
+
+def get_query_embedding(query: str):
+    model = get_embedder()
+    vec = model.encode(
+        [query],
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+    )
+    return vec.astype(np.float32)
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
-def query_pipeline(query: str) -> str:
+def query_pipeline(query: str, pdf_name: str) -> str:
     # 1. Check cache
-    cached = get_cache(query)
+    cached = get_cache(query, pdf_name)
     if cached:
-        print("✅ Cache hit!")
+        print("Cache hit!")
         return cached
 
     # 2. Load FAISS index and chunks
@@ -98,7 +113,7 @@ def query_pipeline(query: str) -> str:
     answer = generate_answer(query, context)
 
     # 7. Cache result
-    set_cache(query, answer)
+    set_cache(query, pdf_name, answer)
     return answer
 
 

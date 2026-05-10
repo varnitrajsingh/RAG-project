@@ -95,6 +95,15 @@ def process_pdf(
     )
 
     print("✅ Indexing complete.")
+
+    # ── Save to disk ───────────────────────────────────────
+    import pickle
+    faiss.write_index(index, os.path.join("vectorstore", "faiss_index"))
+    with open(os.path.join("vectorstore", "chunks.pkl"), "wb") as f:
+        pickle.dump(texts, f)
+    print("✅ Vectorstore saved to disk.")
+    # ──────────────────────────────────────────────────────
+
     return texts, index
 
 

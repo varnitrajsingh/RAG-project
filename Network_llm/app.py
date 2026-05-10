@@ -1,9 +1,12 @@
 import streamlit as st
 import os
 import sys
+import traceback
 from dotenv import load_dotenv
 
+
 load_dotenv()
+
 
 def get_secret(key: str) -> str:
     try:
@@ -11,10 +14,18 @@ def get_secret(key: str) -> str:
     except (KeyError, FileNotFoundError):
         return os.getenv(key, "")
 
+
 for _key in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "HUGGINGFACE_API_KEY", "GEMINI_API_KEY"]:
     _val = get_secret(_key)
     if _val:
         os.environ[_key] = _val
+
+# ── DEBUG: Startup ─────────────────────────────────────────────────────────────
+print("=" * 60)
+print("🔍 DEBUG: Environment Key Status at Startup")
+print(f"  GEMINI_API_KEY set: {bool(os.environ.get('GEMINI_API_KEY'))}")
+print(f"  GOOGLE_API_KEY set: {bool(os.environ.get('GOOGLE_API_KEY'))}")
+print("=" * 60)
 
 os.makedirs("data/uploads", exist_ok=True)
 os.makedirs("vectorstore", exist_ok=True)
@@ -22,8 +33,23 @@ os.makedirs("vectorstore", exist_ok=True)
 pipeline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Pipeline")
 sys.path.insert(0, pipeline_path)
 
-from ingest import process_pdf
-from retrieve import query_pipeline
+print(f"🔍 DEBUG: Pipeline path: {pipeline_path}")
+print(f"🔍 DEBUG: Pipeline path exists: {os.path.exists(pipeline_path)}")
+
+try:
+    from ingest import process_pdf
+    print("✅ DEBUG: ingest imported successfully")
+except Exception as e:
+    print(f"❌ DEBUG: Failed to import ingest: {e}")
+    traceback.print_exc()
+
+try:
+    from retrieve import query_pipeline
+    print("✅ DEBUG: retrieve imported successfully")
+except Exception as e:
+    print(f"❌ DEBUG: Failed to import retrieve: {e}")
+    traceback.print_exc()
+
 
 st.set_page_config(
     page_title="Network Engineer Assistant",
@@ -92,6 +118,7 @@ else:
     GRADIENT_A  = "#0969da"
     GRADIENT_B  = "#0550ae"
 
+
 st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -108,8 +135,6 @@ html, body, [class*="css"] {{
     max-width: 800px !important;
     padding: 0 1.5rem 3rem 1.5rem !important;
 }}
-
-/* ── Hero ── */
 .app-hero {{
     text-align: center;
     padding: 2.5rem 1rem 2rem 1rem;
@@ -147,11 +172,7 @@ html, body, [class*="css"] {{
     margin: 0 0 1.5rem 0;
     border: none;
 }}
-
-/* ── CRITICAL: Kill the empty label gap above file uploader ── */
-[data-testid="stFileUploader"] {{
-    margin-top: 0 !important;
-}}
+[data-testid="stFileUploader"] {{ margin-top: 0 !important; }}
 [data-testid="stFileUploader"] > label {{
     display: none !important;
     height: 0 !important;
@@ -159,11 +180,7 @@ html, body, [class*="css"] {{
     padding: 0 !important;
     overflow: hidden !important;
 }}
-[data-testid="stFileUploader"] > div:first-of-type {{
-    margin-top: 0 !important;
-}}
-
-/* ── File Uploader Dropzone ── */
+[data-testid="stFileUploader"] > div:first-of-type {{ margin-top: 0 !important; }}
 [data-testid="stFileUploader"] > div {{
     background: {SURFACE2} !important;
     border: 1.5px dashed {BORDER} !important;
@@ -187,8 +204,6 @@ html, body, [class*="css"] {{
     border-radius: 6px !important;
     padding: 0.3rem 0.9rem !important;
 }}
-
-/* ── Section Cards ── */
 .section-card {{
     background: {SURFACE};
     border: 1px solid {BORDER};
@@ -221,8 +236,6 @@ html, body, [class*="css"] {{
     letter-spacing: 0;
     text-transform: none;
 }}
-
-/* ── Status Badges ── */
 .status-badge {{
     display: inline-flex;
     align-items: center;
@@ -237,8 +250,6 @@ html, body, [class*="css"] {{
 .status-badge.info    {{ background: {INFO_BG};    color: {INFO_FG};    border: 1px solid {INFO_BD}; }}
 .status-badge.warning {{ background: {WARN_BG};    color: {WARN_FG};    border: 1px solid {WARN_BD}; }}
 .status-badge.error   {{ background: {ERR_BG};     color: {ERR_FG};     border: 1px solid {ERR_BD}; }}
-
-/* ── Text Input ── */
 [data-testid="stTextInput"] input {{
     background: {INPUT_BG} !important;
     border: 1.5px solid {BORDER} !important;
@@ -260,8 +271,6 @@ html, body, [class*="css"] {{
     margin: 0 !important;
     padding: 0 !important;
 }}
-
-/* ── Submit Button ── */
 [data-testid="stFormSubmitButton"] button {{
     background: {ACCENT} !important;
     color: #ffffff !important;
@@ -280,8 +289,6 @@ html, body, [class*="css"] {{
     box-shadow: 0 4px 16px {ACCENT_GLOW} !important;
     transform: translateY(-1px) !important;
 }}
-
-/* ── Clear Button ── */
 .clear-btn > div > button {{
     background: transparent !important;
     border: 1px solid {BORDER} !important;
@@ -300,8 +307,6 @@ html, body, [class*="css"] {{
     transform: none !important;
     box-shadow: none !important;
 }}
-
-/* ── Chat Messages ── */
 [data-testid="stChatMessage"] {{
     background: {SURFACE2} !important;
     border: 1px solid {BORDER} !important;
@@ -309,13 +314,10 @@ html, body, [class*="css"] {{
     padding: 0.75rem 1rem !important;
     margin-bottom: 0.5rem !important;
 }}
-
-/* ── Scrollbar ── */
 ::-webkit-scrollbar {{ width: 5px; }}
 ::-webkit-scrollbar-track {{ background: {BG}; }}
 ::-webkit-scrollbar-thumb {{ background: {SCROLLBAR}; border-radius: 99px; }}
 ::-webkit-scrollbar-thumb:hover {{ background: {ACCENT}; }}
-
 hr {{ border-color: {BORDER} !important; }}
 </style>
 """, unsafe_allow_html=True)
@@ -341,11 +343,10 @@ st.markdown(f"""
 
 
 # ── Upload Section ────────────────────────────────────────────────────────────
-#st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">📄 Document</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
-    "x",  # non-empty string required by Streamlit but hidden via CSS
+    "x",
     type=["pdf"],
     label_visibility="hidden"
 )
@@ -355,6 +356,9 @@ if uploaded_file:
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
 
+    print(f"🔍 DEBUG: File uploaded: {uploaded_file.name}")
+    print(f"🔍 DEBUG: Saved to: {file_path} | Exists: {os.path.exists(file_path)}")
+
     st.markdown(
         f'<div class="status-badge success">✓ Uploaded: <strong>{uploaded_file.name}</strong></div>',
         unsafe_allow_html=True
@@ -363,18 +367,29 @@ if uploaded_file:
     if st.session_state.get("last_uploaded") != uploaded_file.name:
         with st.spinner("Building vector index…"):
             try:
+                print(f"🔍 DEBUG: Calling process_pdf({file_path})")
+                
+                import shutil
+                if os.path.exists("vectorstore"):
+                    shutil.rmtree("vectorstore")
+                os.makedirs("vectorstore", exist_ok=True)
+
                 process_pdf(file_path)
                 st.session_state["last_uploaded"] = uploaded_file.name
+                print(f"✅ DEBUG: process_pdf done. last_uploaded = {st.session_state['last_uploaded']}")
                 st.markdown(
                     '<div class="status-badge success">✓ Document indexed and ready</div>',
                     unsafe_allow_html=True
                 )
             except Exception as e:
+                print(f"❌ DEBUG: process_pdf failed: {e}")
+                print(traceback.format_exc())
                 st.markdown(
                     f'<div class="status-badge error">✕ Failed to process: {e}</div>',
                     unsafe_allow_html=True
                 )
     else:
+        print(f"🔍 DEBUG: Already indexed: {uploaded_file.name}")
         st.markdown(
             '<div class="status-badge info">ℹ Already indexed — ready to query</div>',
             unsafe_allow_html=True
@@ -387,12 +402,11 @@ st.markdown('</div>', unsafe_allow_html=True)
 if "history" not in st.session_state:
     st.session_state.history = []
 
-#st.markdown('<div class="section-card">', unsafe_allow_html=True)
 st.markdown('<div class="section-label">💬 Ask a Question</div>', unsafe_allow_html=True)
 
 with st.form(key="query_form", clear_on_submit=True):
     query = st.text_input(
-        "q",  # hidden via CSS
+        "q",
         placeholder="e.g. What port does BGP use?",
         label_visibility="hidden"
     )
@@ -400,21 +414,33 @@ with st.form(key="query_form", clear_on_submit=True):
 
 if submitted and query.strip():
     if st.session_state.get("last_uploaded") is None:
+        print("⚠️ DEBUG: Query submitted but no PDF uploaded")
         st.markdown(
             '<div class="status-badge warning">⚠ Upload and process a PDF first</div>',
             unsafe_allow_html=True
         )
     else:
+        pdf_name = st.session_state.get("last_uploaded", "")
+        print(f"🔍 DEBUG: Query = '{query}'")
+        print(f"🔍 DEBUG: pdf_name = '{pdf_name}'")
+        print(f"🔍 DEBUG: GEMINI_API_KEY present = {bool(os.environ.get('GEMINI_API_KEY'))}")
         with st.spinner("Thinking…"):
             try:
-                answer = query_pipeline(query)
+                print("🔍 DEBUG: Calling query_pipeline...")
+                answer = query_pipeline(query, pdf_name)
+                print(f"🔍 DEBUG: Answer type = {type(answer)}")
+                print(f"🔍 DEBUG: Answer preview = {str(answer)[:150] if answer else 'NONE/EMPTY'}")
                 st.session_state.history.append({"q": query, "a": answer})
+                print("✅ DEBUG: Appended to history OK")
             except Exception as e:
+                print(f"❌ DEBUG: query_pipeline exception: {e}")
+                print(traceback.format_exc())
                 st.markdown(
                     f'<div class="status-badge error">✕ Error: {e}</div>',
                     unsafe_allow_html=True
                 )
 elif submitted and not query.strip():
+    print("⚠️ DEBUG: Empty query")
     st.markdown(
         '<div class="status-badge warning">⚠ Please enter a question</div>',
         unsafe_allow_html=True
@@ -426,7 +452,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ── Conversation History ──────────────────────────────────────────────────────
 if st.session_state.history:
     turn_count = len(st.session_state.history)
-    #st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown(
         f'<div class="section-label">🗂 Conversation'
         f'<span class="label-count">{turn_count} turn{"s" if turn_count != 1 else ""}</span>'
