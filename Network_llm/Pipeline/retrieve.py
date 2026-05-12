@@ -1,28 +1,16 @@
-
 import os
-import sys
+import time
 import pickle
 from typing import List, Dict
 
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-
-# ─────────────────────────────────────────────────────────────
-# Fix import path
-# ─────────────────────────────────────────────────────────────
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.abspath(__file__))
-)
-
-from llm import generate_answer
-from cache import get_cache, set_cache
-from hybrid import keyword_search
+from rank_bm25 import BM25Okapi
 
 
 # ─────────────────────────────────────────────────────────────
-# Config
+# CONFIG
 # ─────────────────────────────────────────────────────────────
 VECTORSTORE_DIR = "vectorstore"
 
@@ -36,48 +24,57 @@ CHUNKS_PATH = os.path.join(
     "chunks.pkl"
 )
 
+TOP_K_SEMANTIC = 10
+TOP_K_KEYWORD = 10
+FINAL_TOP_K = 8
+
 
 # ─────────────────────────────────────────────────────────────
-# Lazy Model Loading
+# EMBEDDING MODEL
 # ─────────────────────────────────────────────────────────────
-_embedder = None
+_embed_model = None
 
 
-def get_embedder() -> SentenceTransformer:
-    """
-    Lazy-load embedding model.
-    """
+def get_embed_model() -> SentenceTransformer:
 
-    global _embedder
+    global _embed_model
 
-    if _embedder is None:
+    if _embed_model is None:
+
         print("🔄 Loading embedding model...")
 
-        _embedder = SentenceTransformer(
+        _embed_model = SentenceTransformer(
             "BAAI/bge-base-en-v1.5"
         )
 
         print("✅ Embedding model loaded.")
 
-    return _embedder
+    return _embed_model
 
 
 # ─────────────────────────────────────────────────────────────
-# Query Embedding
+# QUERY EMBEDDING
 # ─────────────────────────────────────────────────────────────
-def get_query_embedding(query: str) -> np.ndarray:
+def embed_query(query: str) -> np.ndarray:
     """
     Generate normalized query embedding.
     """
 
-    model = get_embedder()
+    print("\n🧠 Embedding Query")
+    print("=" * 80)
 
-    # IMPORTANT:
-    # BGE models work better with instruction prefix
+    print(f"\n📝 Original Query:\n{query}")
+
+    model = get_embed_model()
+
     formatted_query = (
         "Represent this sentence for searching relevant passages: "
         + query
     )
+
+    print("\n📝 Formatted Query")
+    print("-" * 80)
+    print(formatted_query)
 
     embedding = model.encode(
         [formatted_query],
@@ -85,28 +82,39 @@ def get_query_embedding(query: str) -> np.ndarray:
         convert_to_numpy=True,
     )
 
-    return embedding.astype(np.float32)
+    embedding = embedding.astype(np.float32)
+
+    print("\n📊 Embedding Stats")
+    print("-" * 80)
+
+    print("Shape :", embedding.shape)
+    print("Min   :", np.min(embedding))
+    print("Max   :", np.max(embedding))
+    print("Mean  :", np.mean(embedding))
+
+    return embedding
 
 
 # ─────────────────────────────────────────────────────────────
-# Load Vectorstore
+# LOAD VECTORSTORE
 # ─────────────────────────────────────────────────────────────
 def load_vectorstore():
     """
-    Load FAISS index + chunks metadata.
+    Load FAISS index + chunks.
     """
+
+    print("\n📦 Loading Vectorstore")
+    print("=" * 80)
 
     if not os.path.exists(INDEX_PATH):
         raise FileNotFoundError(
-            f"FAISS index not found at: {INDEX_PATH}"
+            f"❌ FAISS index not found: {INDEX_PATH}"
         )
 
     if not os.path.exists(CHUNKS_PATH):
         raise FileNotFoundError(
-            f"Chunks file not found at: {CHUNKS_PATH}"
+            f"❌ Chunks file not found: {CHUNKS_PATH}"
         )
-
-    print("📦 Loading vectorstore...")
 
     index = faiss.read_index(INDEX_PATH)
 
@@ -114,41 +122,131 @@ def load_vectorstore():
         chunks = pickle.load(f)
 
     print(f"✅ Loaded {len(chunks)} chunks.")
+    print(f"✅ FAISS vectors: {index.ntotal}")
 
     return index, chunks
 
 
 # ─────────────────────────────────────────────────────────────
-# Semantic Search
+# EXACT MATCH DEBUG
+# ─────────────────────────────────────────────────────────────
+def exact_match_debug(
+    query: str,
+    chunks: List[Dict],
+):
+    """
+    Check whether exact query text exists.
+    """
+
+    print("\n🔎 EXACT MATCH DEBUG")
+    print("=" * 80)
+
+    lower_query = query.lower()
+
+    found = False
+
+    for idx, chunk in enumerate(chunks):
+
+        text = chunk["text"].lower()
+
+        if lower_query in text:
+
+            found = True
+
+            print(f"\n✅ Exact match found in chunk #{idx}")
+
+            print("-" * 80)
+            print(chunk["text"][:1000])
+
+            break
+
+    if not found:
+        print("❌ No exact query match found.")
+
+
+# ─────────────────────────────────────────────────────────────
+# SEMANTIC SEARCH
 # ─────────────────────────────────────────────────────────────
 def semantic_search(
     query: str,
-    index: faiss.IndexFlatIP,
-    chunks: List[Dict],
-    top_k: int = 10,
-) -> List[Dict]:
+    index,
+    chunks,
+    top_k: int = TOP_K_SEMANTIC,
+):
     """
-    Perform semantic vector search.
+    FAISS semantic retrieval.
     """
 
-    query_embedding = get_query_embedding(query)
+    print("\n" + "=" * 80)
+    print("🔍 SEMANTIC SEARCH")
+    print("=" * 80)
+
+    query_embedding = embed_query(query)
+
+    start = time.time()
 
     scores, indices = index.search(
         query_embedding,
         top_k,
     )
 
+    elapsed = time.time() - start
+
+    print(f"\n⏱ Retrieval Time: {elapsed:.4f}s")
+
+    print("\n📊 Raw Scores")
+    print("-" * 80)
+    print(scores[0])
+
+    print("\n📊 Raw Indices")
+    print("-" * 80)
+    print(indices[0])
+
     results = []
 
-    for score, idx in zip(scores[0], indices[0]):
+    print("\n📦 Retrieved Chunks")
+    print("=" * 80)
+
+    for rank, (score, idx) in enumerate(
+        zip(scores[0], indices[0]),
+        start=1,
+    ):
+
+        print(f"\n🔹 Rank #{rank}")
+
+        print(f"Index : {idx}")
+        print(f"Score : {score:.4f}")
+
+        if score >= 0.80:
+            relevance = "VERY STRONG"
+
+        elif score >= 0.70:
+            relevance = "STRONG"
+
+        elif score >= 0.60:
+            relevance = "MEDIUM"
+
+        else:
+            relevance = "WEAK"
+
+        print(f"Relevance : {relevance}")
 
         if idx == -1:
+            print("❌ Invalid index")
             continue
 
         if idx >= len(chunks):
+            print("❌ Index out of bounds")
             continue
 
         chunk = chunks[idx]
+
+        print(f"Page : {chunk.get('page')}")
+
+        print("\n📄 Chunk Preview")
+        print("-" * 80)
+
+        print(chunk["text"][:1000])
 
         results.append(
             {
@@ -164,32 +262,68 @@ def semantic_search(
 
 
 # ─────────────────────────────────────────────────────────────
-# Keyword Search
+# BM25 KEYWORD SEARCH
 # ─────────────────────────────────────────────────────────────
-def keyword_retrieval(
+def keyword_search(
     query: str,
     chunks: List[Dict],
-) -> List[Dict]:
+    top_k: int = TOP_K_KEYWORD,
+):
     """
-    Perform keyword/BM25 retrieval.
+    BM25 keyword retrieval.
     """
+
+    print("\n" + "=" * 80)
+    print("🔍 KEYWORD SEARCH")
+    print("=" * 80)
 
     texts = [chunk["text"] for chunk in chunks]
 
-    indices = keyword_search(query, texts)
+    tokenized_corpus = [
+        text.lower().split()
+        for text in texts
+    ]
+
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    tokenized_query = query.lower().split()
+
+    print("\n📝 Tokenized Query")
+    print("-" * 80)
+
+    print(tokenized_query)
+
+    scores = bm25.get_scores(tokenized_query)
+
+    top_indices = np.argsort(scores)[::-1][:top_k]
+
+    print("\n📊 BM25 Top Scores")
+    print("-" * 80)
+
+    print(scores[top_indices])
 
     results = []
 
-    for idx in indices:
+    print("\n📦 BM25 Retrieved Chunks")
+    print("=" * 80)
 
-        if idx >= len(chunks):
-            continue
+    for rank, idx in enumerate(top_indices, start=1):
 
         chunk = chunks[idx]
 
+        print(f"\n🔹 Rank #{rank}")
+        print(f"Index : {idx}")
+        print(f"Score : {scores[idx]:.4f}")
+        print(f"Page  : {chunk.get('page')}")
+
+        print("\n📄 Chunk Preview")
+        print("-" * 80)
+
+        print(chunk["text"][:1000])
+
         results.append(
             {
-                "score": None,
+                "score": float(scores[idx]),
                 "text": chunk["text"],
                 "page": chunk.get("page"),
                 "source": chunk.get("source"),
@@ -201,17 +335,19 @@ def keyword_retrieval(
 
 
 # ─────────────────────────────────────────────────────────────
-# Merge Results
+# MERGE RESULTS
 # ─────────────────────────────────────────────────────────────
 def merge_results(
-    semantic_results: List[Dict],
-    keyword_results: List[Dict],
-    max_chunks: int = 8,
-) -> List[Dict]:
+    semantic_results,
+    keyword_results,
+):
     """
-    Merge semantic + keyword results.
-    Deduplicate by text.
+    Merge + deduplicate results.
     """
+
+    print("\n" + "=" * 80)
+    print("🧩 MERGING RESULTS")
+    print("=" * 80)
 
     merged = []
     seen = set()
@@ -224,172 +360,109 @@ def merge_results(
             continue
 
         seen.add(text)
+
         merged.append(result)
 
-        if len(merged) >= max_chunks:
+        print(
+            f"✅ Added "
+            f"({result['retrieval_type']}) "
+            f"score={result['score']}"
+        )
+
+        if len(merged) >= FINAL_TOP_K:
             break
+
+    print(f"\n✅ Final merged results: {len(merged)}")
 
     return merged
 
 
 # ─────────────────────────────────────────────────────────────
-# Context Builder
+# BUILD CONTEXT
 # ─────────────────────────────────────────────────────────────
-def build_context(results: List[Dict]) -> str:
+def build_context(results):
     """
-    Build final LLM context.
+    Build final context for LLM.
     """
+
+    print("\n" + "=" * 80)
+    print("🧱 BUILDING CONTEXT")
+    print("=" * 80)
 
     context_parts = []
 
     for idx, result in enumerate(results, start=1):
 
-        page = result.get("page")
-
         chunk_text = (
-            f"[Chunk {idx} | Page {page}]\n"
+            f"[Chunk {idx} | "
+            f"Page {result.get('page')}]\n\n"
             f"{result['text']}"
         )
 
         context_parts.append(chunk_text)
 
-    return "\n\n".join(context_parts)
+    context = "\n\n".join(context_parts)
+
+    print(f"\n📏 Context Length: {len(context)} chars")
+
+    print("\n📄 Context Preview")
+    print("-" * 80)
+
+    print(context[:4000])
+
+    return context
 
 
 # ─────────────────────────────────────────────────────────────
-# Main Query Pipeline
+# MAIN RETRIEVER
 # ─────────────────────────────────────────────────────────────
-def query_pipeline(
-    query: str,
-    pdf_name: str,
-) -> str:
+def retrieve(query: str):
     """
-    Full RAG query pipeline.
+    Full retrieval pipeline.
     """
 
-    # ─────────────────────────────────────────
-    # 1. Cache Check
-    # ─────────────────────────────────────────
-    cached_answer = get_cache(
-        query=query,
-        pdf_name=pdf_name,
-    )
+    print("\n" + "=" * 80)
+    print("🚀 STARTING RETRIEVAL PIPELINE")
+    print("=" * 80)
 
-    if cached_answer:
-        print("⚡ Cache hit.")
-        return cached_answer
-
-    # ─────────────────────────────────────────
-    # 2. Load Vectorstore
-    # ─────────────────────────────────────────
+    # Load vectorstore
     index, chunks = load_vectorstore()
 
-    # ─────────────────────────────────────────
-    # 3. Semantic Retrieval
-    # ─────────────────────────────────────────
+    # Exact match debug
+    exact_match_debug(query, chunks)
+
+    # Semantic retrieval
     semantic_results = semantic_search(
         query=query,
         index=index,
         chunks=chunks,
-        top_k=10,
     )
 
-    # ─────────────────────────────────────────
-    # 4. Keyword Retrieval
-    # ─────────────────────────────────────────
-    keyword_results = keyword_retrieval(
+    # Keyword retrieval
+    keyword_results = keyword_search(
         query=query,
         chunks=chunks,
     )
 
-    # ─────────────────────────────────────────
-    # 5. Merge Results
-    # ─────────────────────────────────────────
+    # Merge
     final_results = merge_results(
-        semantic_results=semantic_results,
-        keyword_results=keyword_results,
-        max_chunks=8,
+        semantic_results,
+        keyword_results,
     )
 
-    # ─────────────────────────────────────────
-    # DEBUG RETRIEVAL
-    # ─────────────────────────────────────────
-    print("\n🔍 Retrieval Results")
-    print("=" * 80)
-
-    for idx, result in enumerate(final_results, start=1):
-
-        print(f"\nResult {idx}")
-        print(f"Type  : {result['retrieval_type']}")
-        print(f"Page  : {result.get('page')}")
-        print(f"Score : {result.get('score')}")
-
-        print("-" * 80)
-        print(result["text"][:500])
-
-    # ─────────────────────────────────────────
-    # 6. Build Context
-    # ─────────────────────────────────────────
+    # Build context
     context = build_context(final_results)
 
-    if not context.strip():
-        return (
-            "❌ No relevant information found "
-            "in the document."
-        )
+    print("\n✅ Retrieval Pipeline Complete")
 
-    # ─────────────────────────────────────────
-    # 7. Generate Final Answer
-    # ─────────────────────────────────────────
-    answer = generate_answer(
-        query=query,
-        context=context,
-    )
-
-    # ─────────────────────────────────────────
-    # 8. Cache Answer
-    # ─────────────────────────────────────────
-    set_cache(
-        query=query,
-        pdf_name=pdf_name,
-        answer=answer,
-    )
-
-    return answer
+    return context
 
 
 # ─────────────────────────────────────────────────────────────
-# Local Testing
+# TESTING
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
 
-    print("🔍 Testing RAG Pipeline")
-    print("=" * 80)
+    query = "how to change AS number in transport"
 
-    test_queries = [
-        "What is BGP and what port does it use?",
-        "Explain OSPF shortest path algorithm",
-        "What are routing protocols?",
-    ]
-
-    for query in test_queries:
-
-        print("\n" + "=" * 80)
-        print(f"❓ Query: {query}")
-
-        try:
-
-            answer = query_pipeline(
-                query=query,
-                pdf_name="sample.pdf",
-            )
-
-            print("\n💬 Final Answer")
-            print("-" * 80)
-            print(answer)
-
-        except Exception as e:
-
-            print(f"❌ Error: {e}")
-
-        print("=" * 80)
+    context = retrieve(query)
