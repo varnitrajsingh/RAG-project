@@ -1,137 +1,395 @@
+
 import os
 import sys
-import faiss
 import pickle
+from typing import List, Dict
+
+import faiss
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
+# ─────────────────────────────────────────────────────────────
 # Fix import path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+# ─────────────────────────────────────────────────────────────
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.abspath(__file__))
+)
 
 from llm import generate_answer
 from cache import get_cache, set_cache
 from hybrid import keyword_search
 
 
-# ── Lazy embedder init ────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Config
+# ─────────────────────────────────────────────────────────────
+VECTORSTORE_DIR = "vectorstore"
+
+INDEX_PATH = os.path.join(
+    VECTORSTORE_DIR,
+    "faiss.index"
+)
+
+CHUNKS_PATH = os.path.join(
+    VECTORSTORE_DIR,
+    "chunks.pkl"
+)
+
+
+# ─────────────────────────────────────────────────────────────
+# Lazy Model Loading
+# ─────────────────────────────────────────────────────────────
 _embedder = None
 
-def get_embedder():
+
+def get_embedder() -> SentenceTransformer:
+    """
+    Lazy-load embedding model.
+    """
+
     global _embedder
-    if _embedder is not None:
-        return _embedder
 
-    api_key = None
-    try:
-        import streamlit as st
-        api_key = st.secrets.get("GEMINI_API_KEY")
-    except Exception:
-        pass
-
-    if not api_key:
-        from dotenv import load_dotenv
-        load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise ValueError(
-            "GEMINI_API_KEY not found. "
-            "Set it in Streamlit Secrets (cloud) or a .env file (local)."
-        )
-
-    _embedder = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
-        google_api_key=api_key,
-        task_type="retrieval_query",
-    )
-    return _embedder
-
-
-# ── Embedding helper ──────────────────────────────────────────────────────────
-from sentence_transformers import SentenceTransformer
-
-_embedder = None
-
-def get_embedder():
-    global _embedder
     if _embedder is None:
         print("🔄 Loading embedding model...")
-        _embedder = SentenceTransformer("BAAI/bge-small-en-v1.5")
+
+        _embedder = SentenceTransformer(
+            "BAAI/bge-base-en-v1.5"
+        )
+
         print("✅ Embedding model loaded.")
+
     return _embedder
 
-def get_query_embedding(query: str):
+
+# ─────────────────────────────────────────────────────────────
+# Query Embedding
+# ─────────────────────────────────────────────────────────────
+def get_query_embedding(query: str) -> np.ndarray:
+    """
+    Generate normalized query embedding.
+    """
+
     model = get_embedder()
-    vec = model.encode(
-        [query],
+
+    # IMPORTANT:
+    # BGE models work better with instruction prefix
+    formatted_query = (
+        "Represent this sentence for searching relevant passages: "
+        + query
+    )
+
+    embedding = model.encode(
+        [formatted_query],
         normalize_embeddings=True,
         convert_to_numpy=True,
     )
-    return vec.astype(np.float32)
 
-# ── Main pipeline ─────────────────────────────────────────────────────────────
-def query_pipeline(query: str, pdf_name: str) -> str:
-    # 1. Check cache
-    cached = get_cache(query, pdf_name)
-    if cached:
-        print("Cache hit!")
-        return cached
+    return embedding.astype(np.float32)
 
-    # 2. Load FAISS index and chunks
-    index_path = os.path.join("vectorstore", "faiss_index")
-    chunks_path = os.path.join("vectorstore", "chunks.pkl")
 
-    if not os.path.exists(index_path) or not os.path.exists(chunks_path):
-        return "❌ Vectorstore not found. Please run the ingestion pipeline first."
+# ─────────────────────────────────────────────────────────────
+# Load Vectorstore
+# ─────────────────────────────────────────────────────────────
+def load_vectorstore():
+    """
+    Load FAISS index + chunks metadata.
+    """
 
-    index = faiss.read_index(index_path)
+    if not os.path.exists(INDEX_PATH):
+        raise FileNotFoundError(
+            f"FAISS index not found at: {INDEX_PATH}"
+        )
 
-    with open(chunks_path, "rb") as f:
-        texts = pickle.load(f)
+    if not os.path.exists(CHUNKS_PATH):
+        raise FileNotFoundError(
+            f"Chunks file not found at: {CHUNKS_PATH}"
+        )
 
-    # 3. Semantic search
+    print("📦 Loading vectorstore...")
+
+    index = faiss.read_index(INDEX_PATH)
+
+    with open(CHUNKS_PATH, "rb") as f:
+        chunks = pickle.load(f)
+
+    print(f"✅ Loaded {len(chunks)} chunks.")
+
+    return index, chunks
+
+
+# ─────────────────────────────────────────────────────────────
+# Semantic Search
+# ─────────────────────────────────────────────────────────────
+def semantic_search(
+    query: str,
+    index: faiss.IndexFlatIP,
+    chunks: List[Dict],
+    top_k: int = 10,
+) -> List[Dict]:
+    """
+    Perform semantic vector search.
+    """
+
     query_embedding = get_query_embedding(query)
-    D, I = index.search(query_embedding, k=5)
-    semantic_chunks = [texts[i] for i in I[0] if i < len(texts)]
 
-    # 4. Keyword search
-    keyword_indices = keyword_search(query, texts)
-    keyword_chunks = [texts[i] for i in keyword_indices if i < len(texts)]
+    scores, indices = index.search(
+        query_embedding,
+        top_k,
+    )
 
-    # 5. Deduplicate while preserving order
+    results = []
+
+    for score, idx in zip(scores[0], indices[0]):
+
+        if idx == -1:
+            continue
+
+        if idx >= len(chunks):
+            continue
+
+        chunk = chunks[idx]
+
+        results.append(
+            {
+                "score": float(score),
+                "text": chunk["text"],
+                "page": chunk.get("page"),
+                "source": chunk.get("source"),
+                "retrieval_type": "semantic",
+            }
+        )
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────
+# Keyword Search
+# ─────────────────────────────────────────────────────────────
+def keyword_retrieval(
+    query: str,
+    chunks: List[Dict],
+) -> List[Dict]:
+    """
+    Perform keyword/BM25 retrieval.
+    """
+
+    texts = [chunk["text"] for chunk in chunks]
+
+    indices = keyword_search(query, texts)
+
+    results = []
+
+    for idx in indices:
+
+        if idx >= len(chunks):
+            continue
+
+        chunk = chunks[idx]
+
+        results.append(
+            {
+                "score": None,
+                "text": chunk["text"],
+                "page": chunk.get("page"),
+                "source": chunk.get("source"),
+                "retrieval_type": "keyword",
+            }
+        )
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────
+# Merge Results
+# ─────────────────────────────────────────────────────────────
+def merge_results(
+    semantic_results: List[Dict],
+    keyword_results: List[Dict],
+    max_chunks: int = 8,
+) -> List[Dict]:
+    """
+    Merge semantic + keyword results.
+    Deduplicate by text.
+    """
+
+    merged = []
     seen = set()
-    final_chunks = []
-    for chunk in semantic_chunks + keyword_chunks:
-        if chunk not in seen:
-            seen.add(chunk)
-            final_chunks.append(chunk)
 
-    context = "\n\n".join(final_chunks)
+    for result in semantic_results + keyword_results:
 
-    # 6. Generate answer
-    answer = generate_answer(query, context)
+        text = result["text"]
 
-    # 7. Cache result
-    set_cache(query, pdf_name, answer)
+        if text in seen:
+            continue
+
+        seen.add(text)
+        merged.append(result)
+
+        if len(merged) >= max_chunks:
+            break
+
+    return merged
+
+
+# ─────────────────────────────────────────────────────────────
+# Context Builder
+# ─────────────────────────────────────────────────────────────
+def build_context(results: List[Dict]) -> str:
+    """
+    Build final LLM context.
+    """
+
+    context_parts = []
+
+    for idx, result in enumerate(results, start=1):
+
+        page = result.get("page")
+
+        chunk_text = (
+            f"[Chunk {idx} | Page {page}]\n"
+            f"{result['text']}"
+        )
+
+        context_parts.append(chunk_text)
+
+    return "\n\n".join(context_parts)
+
+
+# ─────────────────────────────────────────────────────────────
+# Main Query Pipeline
+# ─────────────────────────────────────────────────────────────
+def query_pipeline(
+    query: str,
+    pdf_name: str,
+) -> str:
+    """
+    Full RAG query pipeline.
+    """
+
+    # ─────────────────────────────────────────
+    # 1. Cache Check
+    # ─────────────────────────────────────────
+    cached_answer = get_cache(
+        query=query,
+        pdf_name=pdf_name,
+    )
+
+    if cached_answer:
+        print("⚡ Cache hit.")
+        return cached_answer
+
+    # ─────────────────────────────────────────
+    # 2. Load Vectorstore
+    # ─────────────────────────────────────────
+    index, chunks = load_vectorstore()
+
+    # ─────────────────────────────────────────
+    # 3. Semantic Retrieval
+    # ─────────────────────────────────────────
+    semantic_results = semantic_search(
+        query=query,
+        index=index,
+        chunks=chunks,
+        top_k=10,
+    )
+
+    # ─────────────────────────────────────────
+    # 4. Keyword Retrieval
+    # ─────────────────────────────────────────
+    keyword_results = keyword_retrieval(
+        query=query,
+        chunks=chunks,
+    )
+
+    # ─────────────────────────────────────────
+    # 5. Merge Results
+    # ─────────────────────────────────────────
+    final_results = merge_results(
+        semantic_results=semantic_results,
+        keyword_results=keyword_results,
+        max_chunks=8,
+    )
+
+    # ─────────────────────────────────────────
+    # DEBUG RETRIEVAL
+    # ─────────────────────────────────────────
+    print("\n🔍 Retrieval Results")
+    print("=" * 80)
+
+    for idx, result in enumerate(final_results, start=1):
+
+        print(f"\nResult {idx}")
+        print(f"Type  : {result['retrieval_type']}")
+        print(f"Page  : {result.get('page')}")
+        print(f"Score : {result.get('score')}")
+
+        print("-" * 80)
+        print(result["text"][:500])
+
+    # ─────────────────────────────────────────
+    # 6. Build Context
+    # ─────────────────────────────────────────
+    context = build_context(final_results)
+
+    if not context.strip():
+        return (
+            "❌ No relevant information found "
+            "in the document."
+        )
+
+    # ─────────────────────────────────────────
+    # 7. Generate Final Answer
+    # ─────────────────────────────────────────
+    answer = generate_answer(
+        query=query,
+        context=context,
+    )
+
+    # ─────────────────────────────────────────
+    # 8. Cache Answer
+    # ─────────────────────────────────────────
+    set_cache(
+        query=query,
+        pdf_name=pdf_name,
+        answer=answer,
+    )
+
     return answer
 
 
-# ── Local test ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Local Testing
+# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("🔍 Testing Query Pipeline")
-    print("=" * 50)
+
+    print("🔍 Testing RAG Pipeline")
+    print("=" * 80)
 
     test_queries = [
         "What is BGP and what port does it use?",
         "Explain OSPF shortest path algorithm",
+        "What are routing protocols?",
     ]
 
     for query in test_queries:
-        print(f"\n❓ Query: {query}")
+
+        print("\n" + "=" * 80)
+        print(f"❓ Query: {query}")
+
         try:
-            answer = query_pipeline(query)
-            print(f"💬 Answer: {answer.strip()}")
+
+            answer = query_pipeline(
+                query=query,
+                pdf_name="sample.pdf",
+            )
+
+            print("\n💬 Final Answer")
+            print("-" * 80)
+            print(answer)
+
         except Exception as e:
+
             print(f"❌ Error: {e}")
-        print("-" * 50)
+
+        print("=" * 80)

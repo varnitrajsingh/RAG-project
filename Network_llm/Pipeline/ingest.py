@@ -1,131 +1,346 @@
 import os
-import numpy as np
+import pickle
+from typing import List, Dict, Tuple
+
 import faiss
-from dotenv import load_dotenv
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
 
-# ── Directory Setup ──────────────────────────────────────────────────────────
-os.makedirs("vectorstore", exist_ok=True)
-os.makedirs("data/uploads", exist_ok=True)
 
-# ── Lazy Model Initialization ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Directory Setup
+# ─────────────────────────────────────────────────────────────
+VECTORSTORE_DIR = "vectorstore"
+UPLOAD_DIR = "data/uploads"
+
+os.makedirs(VECTORSTORE_DIR, exist_ok=True)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────
+# Lazy Embedding Model
+# ─────────────────────────────────────────────────────────────
 _embed_model = None
+
 
 def get_embed_model() -> SentenceTransformer:
     global _embed_model
+
     if _embed_model is None:
-        print("🔄 Loading embedding model (first run only)...")
-        _embed_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        print("🔄 Loading embedding model...")
+        _embed_model = SentenceTransformer(
+            "BAAI/bge-base-en-v1.5"
+        )
         print("✅ Embedding model loaded.")
+
     return _embed_model
 
-# ── Embedding Logic ──────────────────────────────────────────────────────────
-def get_embeddings(texts: list[str], batch_size: int = 64) -> list[list[float]]:
+
+# ─────────────────────────────────────────────────────────────
+# Text Cleaning
+# ─────────────────────────────────────────────────────────────
+def clean_text(text: str) -> str:
     """
-    Embed texts in batches using local BAAI/bge-small-en-v1.5 model.
-    No API key, no rate limits, true batching supported.
+    Basic PDF cleanup.
     """
+
+    text = text.replace("\x00", " ")
+    text = text.replace("\t", " ")
+
+    # remove excessive newlines
+    text = "\n".join(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    )
+
+    # remove excessive spaces
+    text = " ".join(text.split())
+
+    return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────
+# Embedding Generation
+# ─────────────────────────────────────────────────────────────
+def generate_embeddings(
+    texts: List[str],
+    batch_size: int = 64,
+) -> np.ndarray:
+    """
+    Generate normalized embeddings.
+    """
+
     model = get_embed_model()
-    all_embeddings = []
 
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        print(f"  [Embed] Batch {i // batch_size + 1}/{(len(texts) - 1) // batch_size + 1} ({len(batch)} chunks)...")
-        vecs = model.encode(
-            batch,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-        )
-        all_embeddings.extend(vecs.tolist())
+    embeddings = model.encode(
+        texts,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        convert_to_numpy=True,
+        show_progress_bar=True,
+    )
 
-    return all_embeddings
+    return embeddings.astype(np.float32)
 
-# ── FAISS Indexing Logic ─────────────────────────────────────────────────────
-def _build_index_from_chunks(
-    chunks: list[str],
-    embed_batch_size: int = 64,
-    index_batch_size: int = 500,
-) -> faiss.IndexFlatL2:
-    index = None
 
-    for start in range(0, len(chunks), index_batch_size):
-        batch_chunks = chunks[start : start + index_batch_size]
-        print(f"📦 Indexing chunks {start + 1}–{start + len(batch_chunks)} of {len(chunks)}...")
+# ─────────────────────────────────────────────────────────────
+# PDF Loading
+# ─────────────────────────────────────────────────────────────
+def load_pdf(file_path: str):
+    """
+    Load PDF documents.
+    """
 
-        embeddings = get_embeddings(batch_chunks, batch_size=embed_batch_size)
-        embeddings_np = np.array(embeddings, dtype=np.float32)
-
-        if index is None:
-            dim = embeddings_np.shape[1]
-            index = faiss.IndexFlatL2(dim)
-
-        index.add(embeddings_np)
-
-    return index
-
-# ── Main PDF Processor ───────────────────────────────────────────────────────
-def process_pdf(
-    file_path: str,
-    embed_batch_size: int = 64,
-    index_batch_size: int = 500,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
-) -> tuple[list[str], faiss.IndexFlatL2]:
     print(f"📖 Loading PDF: {file_path}")
+
     loader = PyMuPDFLoader(file_path)
     docs = loader.load()
+
+    print(f"✅ Loaded {len(docs)} pages.")
+
+    return docs
+
+
+# ─────────────────────────────────────────────────────────────
+# Chunking
+# ─────────────────────────────────────────────────────────────
+def create_chunks(
+    docs,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+) -> List[Dict]:
+    """
+    Create semantic chunks with metadata.
+    """
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-    )
-    chunks = splitter.split_documents(docs)
-    texts = [c.page_content for c in chunks]
-
-    print(f"✂️  {len(texts)} chunks created. Starting indexing...")
-
-    index = _build_index_from_chunks(
-        texts,
-        embed_batch_size=embed_batch_size,
-        index_batch_size=index_batch_size,
+        separators=[
+            "\n\n",
+            "\n",
+            ". ",
+            " ",
+            "",
+        ],
     )
 
-    print("✅ Indexing complete.")
+    split_docs = splitter.split_documents(docs)
 
-    # ── Save to disk ───────────────────────────────────────
-    import pickle
-    faiss.write_index(index, os.path.join("vectorstore", "faiss_index"))
-    with open(os.path.join("vectorstore", "chunks.pkl"), "wb") as f:
-        pickle.dump(texts, f)
-    print("✅ Vectorstore saved to disk.")
-    # ──────────────────────────────────────────────────────
+    chunks = []
 
-    return texts, index
+    for idx, doc in enumerate(split_docs):
+
+        cleaned_text = clean_text(doc.page_content)
+
+        if not cleaned_text:
+            continue
+
+        chunks.append(
+            {
+                "chunk_id": idx,
+                "text": cleaned_text,
+                "page": doc.metadata.get("page"),
+                "source": doc.metadata.get("source"),
+            }
+        )
+
+    print(f"✂️ Created {len(chunks)} chunks.")
+
+    return chunks
 
 
-# ── Query Embedding (for search/retrieval) ───────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# FAISS Index Creation
+# ─────────────────────────────────────────────────────────────
+def build_faiss_index(
+    embeddings: np.ndarray,
+) -> faiss.IndexFlatIP:
+    """
+    Build cosine similarity FAISS index.
+    """
+
+    dimension = embeddings.shape[1]
+
+    # IMPORTANT:
+    # Using IP because embeddings are normalized.
+    index = faiss.IndexFlatIP(dimension)
+
+    index.add(embeddings)
+
+    print(f"✅ Indexed {index.ntotal} vectors.")
+
+    return index
+
+
+# ─────────────────────────────────────────────────────────────
+# Save Vectorstore
+# ─────────────────────────────────────────────────────────────
+def save_vectorstore(
+    index: faiss.IndexFlatIP,
+    chunks: List[Dict],
+):
+    """
+    Save FAISS index + metadata.
+    """
+
+    index_path = os.path.join(
+        VECTORSTORE_DIR,
+        "faiss.index"
+    )
+
+    metadata_path = os.path.join(
+        VECTORSTORE_DIR,
+        "chunks.pkl"
+    )
+
+    faiss.write_index(index, index_path)
+
+    with open(metadata_path, "wb") as f:
+        pickle.dump(chunks, f)
+
+    print("✅ Vectorstore saved.")
+
+
+# ─────────────────────────────────────────────────────────────
+# Main Ingestion Pipeline
+# ─────────────────────────────────────────────────────────────
+def process_pdf(
+    file_path: str,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    embedding_batch_size: int = 64,
+) -> Tuple[List[Dict], faiss.IndexFlatIP]:
+    """
+    Complete ingestion pipeline.
+    """
+
+    # 1. Load PDF
+    docs = load_pdf(file_path)
+
+    # 2. Chunking
+    chunks = create_chunks(
+        docs=docs,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+    texts = [chunk["text"] for chunk in chunks]
+
+    # 3. Generate embeddings
+    print("🧠 Generating embeddings...")
+
+    embeddings = generate_embeddings(
+        texts=texts,
+        batch_size=embedding_batch_size,
+    )
+
+    # 4. Build FAISS index
+    print("📦 Building FAISS index...")
+
+    index = build_faiss_index(embeddings)
+
+    # 5. Save vectorstore
+    save_vectorstore(index, chunks)
+
+    print("🎉 PDF ingestion completed.")
+
+    return chunks, index
+
+
+# ─────────────────────────────────────────────────────────────
+# Query Embedding
+# ─────────────────────────────────────────────────────────────
 def embed_query(query: str) -> np.ndarray:
-    """Embed a single query string for FAISS similarity search."""
+    """
+    Embed query for retrieval.
+    """
+
     model = get_embed_model()
-    vec = model.encode(
-        [query],
+
+    # IMPORTANT FOR BGE MODELS
+    formatted_query = (
+        "Represent this sentence for searching relevant passages: "
+        + query
+    )
+
+    embedding = model.encode(
+        [formatted_query],
         normalize_embeddings=True,
         convert_to_numpy=True,
     )
-    return vec.astype(np.float32)
+
+    return embedding.astype(np.float32)
 
 
+# ─────────────────────────────────────────────────────────────
+# Retrieval
+# ─────────────────────────────────────────────────────────────
+def search(
+    query: str,
+    index: faiss.IndexFlatIP,
+    chunks: List[Dict],
+    top_k: int = 10,
+):
+    """
+    Search relevant chunks.
+    """
+
+    query_embedding = embed_query(query)
+
+    scores, indices = index.search(
+        query_embedding,
+        top_k,
+    )
+
+    results = []
+
+    for score, idx in zip(scores[0], indices[0]):
+
+        if idx == -1:
+            continue
+
+        chunk = chunks[idx]
+
+        results.append(
+            {
+                "score": float(score),
+                "text": chunk["text"],
+                "page": chunk["page"],
+                "source": chunk["source"],
+            }
+        )
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────
+# Example Usage
+# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Example usage:
-    # texts, index = process_pdf("your_document.pdf")
-    # faiss.write_index(index, "vectorstore/my_index.faiss")
-    #
-    # Search example:
-    # query_vec = embed_query("What is this document about?")
-    # distances, indices = index.search(query_vec, k=5)
-    # results = [texts[i] for i in indices[0]]
-    pass
+
+    chunks, index = process_pdf(
+        file_path="sample.pdf",
+        chunk_size=1000,
+        chunk_overlap=200,
+    )
+
+    results = search(
+        query="What is this document about?",
+        index=index,
+        chunks=chunks,
+        top_k=5,
+    )
+
+    for i, result in enumerate(results, 1):
+
+        print("\n" + "=" * 80)
+        print(f"Result {i}")
+        print(f"Score: {result['score']:.4f}")
+        print(f"Page: {result['page']}")
+        print("-" * 80)
+        print(result["text"][:1000])
