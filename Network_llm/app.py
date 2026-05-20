@@ -44,11 +44,11 @@ except Exception as e:
     traceback.print_exc()
 
 try:
-    from retrieve import retrieve
+    from retrieve import query_pipeline
     print("✅ DEBUG: retrieve imported successfully")
 except Exception as e:
-        print(f"❌ DEBUG: Failed to import retrieve: {e}")
-        traceback.print_exc()
+    print(f"❌ DEBUG: Failed to import retrieve: {e}")
+    traceback.print_exc()
 
 
 st.set_page_config(
@@ -427,8 +427,7 @@ if submitted and query.strip():
         with st.spinner("Thinking…"):
             try:
                 print("🔍 DEBUG: Calling query_pipeline...")
-                # new
-                answer = retrieve(query)
+                answer = query_pipeline(query, pdf_name)
                 print(f"🔍 DEBUG: Answer type = {type(answer)}")
                 print(f"🔍 DEBUG: Answer preview = {str(answer)[:150] if answer else 'NONE/EMPTY'}")
                 st.session_state.history.append({"q": query, "a": answer})

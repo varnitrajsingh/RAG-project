@@ -457,6 +457,8 @@ def retrieve(query: str):
 
     return context
 
+def query_pipeline(query, pdfname=None):
+    return retrieve(query)
 
 # ─────────────────────────────────────────────────────────────
 # TESTING
