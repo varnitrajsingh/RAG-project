@@ -17,21 +17,17 @@ def _save_cache(cache: dict):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
 
-def _hash_key(query: str, pdf_name: str) -> str:
-    """Hash (query + pdf_name) together so the same question
-    for different PDFs always produces a different cache key."""
-    combined = f"{pdf_name.strip().lower()}::{query.strip().lower()}"
+def _hash_key(query: str, pdf_name: str, file_hash: str) -> str:
+    combined = f"{pdf_name.strip().lower()}::{file_hash}::{query.strip().lower()}"
     return hashlib.md5(combined.encode()).hexdigest()
 
-def get_cache(query: str, pdf_name: str):
-    """Return cached answer for (query, pdf_name), or None if not found."""
+def get_cache(query: str, pdf_name: str, file_hash: str):
     cache = _load_cache()
-    key = _hash_key(query, pdf_name)
+    key = _hash_key(query, pdf_name, file_hash)
     return cache.get(key, None)
 
-def set_cache(query: str, pdf_name: str, answer: str):
-    """Store (query, pdf_name) → answer in cache."""
+def set_cache(query: str, pdf_name: str, file_hash: str, answer: str):
     cache = _load_cache()
-    key = _hash_key(query, pdf_name)
+    key = _hash_key(query, pdf_name, file_hash)
     cache[key] = answer
     _save_cache(cache)

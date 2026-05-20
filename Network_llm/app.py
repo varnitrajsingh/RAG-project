@@ -2,11 +2,12 @@ import streamlit as st
 import os
 import sys
 import traceback
+import hashlib
 from dotenv import load_dotenv
 
+from Pipeline.cache import get_cache, set_cache
 
 load_dotenv()
-
 
 def get_secret(key: str) -> str:
     try:
@@ -14,13 +15,11 @@ def get_secret(key: str) -> str:
     except (KeyError, FileNotFoundError):
         return os.getenv(key, "")
 
-
 for _key in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "HUGGINGFACE_API_KEY", "GEMINI_API_KEY"]:
     _val = get_secret(_key)
     if _val:
         os.environ[_key] = _val
 
-# ── DEBUG: Startup ─────────────────────────────────────────────────────────────
 print("=" * 60)
 print("🔍 DEBUG: Environment Key Status at Startup")
 print(f"  GEMINI_API_KEY set: {bool(os.environ.get('GEMINI_API_KEY'))}")
@@ -44,12 +43,12 @@ except Exception as e:
     traceback.print_exc()
 
 try:
-    from retrieve import retrieve
+    import retrieve as retriever
     print("✅ DEBUG: retrieve imported successfully")
+    print(f"🔍 DEBUG: retrieve file: {retriever.__file__}")
 except Exception as e:
     print(f"❌ DEBUG: Failed to import retrieve: {e}")
     traceback.print_exc()
-
 
 st.set_page_config(
     page_title="Network Engineer Assistant",
@@ -64,60 +63,59 @@ theme = st.session_state.theme
 is_dark = theme == "dark"
 
 if is_dark:
-    BG          = "#0d1117"
-    SURFACE     = "#161b22"
-    SURFACE2    = "#1c2128"
-    BORDER      = "#30363d"
-    TEXT        = "#e6edf3"
-    TEXT_MUTED  = "#7d8590"
-    TEXT_FAINT  = "#484f58"
-    ACCENT      = "#2f81f7"
+    BG = "#0d1117"
+    SURFACE = "#161b22"
+    SURFACE2 = "#1c2128"
+    BORDER = "#30363d"
+    TEXT = "#e6edf3"
+    TEXT_MUTED = "#7d8590"
+    TEXT_FAINT = "#484f58"
+    ACCENT = "#2f81f7"
     ACCENT_GLOW = "rgba(47,129,247,0.18)"
-    SUCCESS_BG  = "rgba(46,160,67,0.15)"
-    SUCCESS_FG  = "#3fb950"
-    SUCCESS_BD  = "rgba(46,160,67,0.3)"
-    INFO_BG     = "rgba(47,129,247,0.12)"
-    INFO_FG     = "#58a6ff"
-    INFO_BD     = "rgba(47,129,247,0.25)"
-    WARN_BG     = "rgba(210,153,34,0.15)"
-    WARN_FG     = "#d29922"
-    WARN_BD     = "rgba(210,153,34,0.3)"
-    ERR_BG      = "rgba(248,81,73,0.15)"
-    ERR_FG      = "#f85149"
-    ERR_BD      = "rgba(248,81,73,0.3)"
-    INPUT_BG    = "#0d1117"
-    SCROLLBAR   = "#30363d"
+    SUCCESS_BG = "rgba(46,160,67,0.15)"
+    SUCCESS_FG = "#3fb950"
+    SUCCESS_BD = "rgba(46,160,67,0.3)"
+    INFO_BG = "rgba(47,129,247,0.12)"
+    INFO_FG = "#58a6ff"
+    INFO_BD = "rgba(47,129,247,0.25)"
+    WARN_BG = "rgba(210,153,34,0.15)"
+    WARN_FG = "#d29922"
+    WARN_BD = "rgba(210,153,34,0.3)"
+    ERR_BG = "rgba(248,81,73,0.15)"
+    ERR_FG = "#f85149"
+    ERR_BD = "rgba(248,81,73,0.3)"
+    INPUT_BG = "#0d1117"
+    SCROLLBAR = "#30363d"
     LOGO_FILTER = "drop-shadow(0 0 12px rgba(47,129,247,0.4))"
-    GRADIENT_A  = "#2f81f7"
-    GRADIENT_B  = "#79c0ff"
+    GRADIENT_A = "#2f81f7"
+    GRADIENT_B = "#79c0ff"
 else:
-    BG          = "#f6f8fa"
-    SURFACE     = "#ffffff"
-    SURFACE2    = "#f0f3f6"
-    BORDER      = "#d0d7de"
-    TEXT        = "#1f2328"
-    TEXT_MUTED  = "#57606a"
-    TEXT_FAINT  = "#8c959f"
-    ACCENT      = "#0969da"
+    BG = "#f6f8fa"
+    SURFACE = "#ffffff"
+    SURFACE2 = "#f0f3f6"
+    BORDER = "#d0d7de"
+    TEXT = "#1f2328"
+    TEXT_MUTED = "#57606a"
+    TEXT_FAINT = "#8c959f"
+    ACCENT = "#0969da"
     ACCENT_GLOW = "rgba(9,105,218,0.15)"
-    SUCCESS_BG  = "rgba(31,136,61,0.08)"
-    SUCCESS_FG  = "#1a7f37"
-    SUCCESS_BD  = "rgba(31,136,61,0.2)"
-    INFO_BG     = "rgba(9,105,218,0.08)"
-    INFO_FG     = "#0550ae"
-    INFO_BD     = "rgba(9,105,218,0.2)"
-    WARN_BG     = "rgba(154,103,0,0.08)"
-    WARN_FG     = "#7d4e00"
-    WARN_BD     = "rgba(154,103,0,0.2)"
-    ERR_BG      = "rgba(207,34,46,0.08)"
-    ERR_FG      = "#cf222e"
-    ERR_BD      = "rgba(207,34,46,0.2)"
-    INPUT_BG    = "#ffffff"
-    SCROLLBAR   = "#d0d7de"
+    SUCCESS_BG = "rgba(31,136,61,0.08)"
+    SUCCESS_FG = "#1a7f37"
+    SUCCESS_BD = "rgba(31,136,61,0.2)"
+    INFO_BG = "rgba(9,105,218,0.08)"
+    INFO_FG = "#0550ae"
+    INFO_BD = "rgba(9,105,218,0.2)"
+    WARN_BG = "rgba(154,103,0,0.08)"
+    WARN_FG = "#7d4e00"
+    WARN_BD = "rgba(154,103,0,0.2)"
+    ERR_BG = "rgba(207,34,46,0.08)"
+    ERR_FG = "#cf222e"
+    ERR_BD = "rgba(207,34,46,0.2)"
+    INPUT_BG = "#ffffff"
+    SCROLLBAR = "#d0d7de"
     LOGO_FILTER = "drop-shadow(0 0 10px rgba(9,105,218,0.25))"
-    GRADIENT_A  = "#0969da"
-    GRADIENT_B  = "#0550ae"
-
+    GRADIENT_A = "#0969da"
+    GRADIENT_B = "#0550ae"
 
 st.markdown(f"""
 <style>
@@ -203,14 +201,6 @@ html, body, [class*="css"] {{
     font-size: 0.8rem !important;
     border-radius: 6px !important;
     padding: 0.3rem 0.9rem !important;
-}}
-.section-card {{
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 12px;
-    padding: 1.25rem 1.5rem 1.5rem 1.5rem;
-    margin-bottom: 1.25rem;
-    box-shadow: {"0 1px 3px rgba(0,0,0,0.3)" if is_dark else "0 1px 3px rgba(0,0,0,0.06)"};
 }}
 .section-label {{
     display: flex;
@@ -322,16 +312,12 @@ hr {{ border-color: {BORDER} !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-
-# ── Theme Toggle ──────────────────────────────────────────────────────────────
 _, col_btn = st.columns([7, 1])
 with col_btn:
     if st.button("☀️" if is_dark else "🌙", key="theme_toggle", help="Toggle theme"):
         st.session_state.theme = "light" if is_dark else "dark"
         st.rerun()
 
-
-# ── Hero Header ───────────────────────────────────────────────────────────────
 st.markdown(f"""
 <div class="app-hero">
     <span class="hero-icon">🔧</span>
@@ -341,8 +327,6 @@ st.markdown(f"""
 <div class="hero-divider"></div>
 """, unsafe_allow_html=True)
 
-
-# ── Upload Section ────────────────────────────────────────────────────────────
 st.markdown('<div class="section-label">📄 Document</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
@@ -356,49 +340,56 @@ if uploaded_file:
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
 
+    with open(file_path, "rb") as f:
+        file_hash = hashlib.md5(f.read()).hexdigest()
+
     print(f"🔍 DEBUG: File uploaded: {uploaded_file.name}")
     print(f"🔍 DEBUG: Saved to: {file_path} | Exists: {os.path.exists(file_path)}")
+
+    st.session_state["last_uploaded"] = uploaded_file.name
+    st.session_state["file_hash"] = file_hash
 
     st.markdown(
         f'<div class="status-badge success">✓ Uploaded: <strong>{uploaded_file.name}</strong></div>',
         unsafe_allow_html=True
     )
 
-    if st.session_state.get("last_uploaded") != uploaded_file.name:
-        with st.spinner("Building vector index…"):
-            try:
-                print(f"🔍 DEBUG: Calling process_pdf({file_path})")
-                
-                import shutil
-                if os.path.exists("vectorstore"):
-                    shutil.rmtree("vectorstore")
-                os.makedirs("vectorstore", exist_ok=True)
+if uploaded_file:
+    file_path = f"data/uploads/{uploaded_file.name}"
 
-                process_pdf(file_path)
-                st.session_state["last_uploaded"] = uploaded_file.name
-                print(f"✅ DEBUG: process_pdf done. last_uploaded = {st.session_state['last_uploaded']}")
-                st.markdown(
-                    '<div class="status-badge success">✓ Document indexed and ready</div>',
-                    unsafe_allow_html=True
-                )
-            except Exception as e:
-                print(f"❌ DEBUG: process_pdf failed: {e}")
-                print(traceback.format_exc())
-                st.markdown(
-                    f'<div class="status-badge error">✕ Failed to process: {e}</div>',
-                    unsafe_allow_html=True
-                )
-    else:
-        print(f"🔍 DEBUG: Already indexed: {uploaded_file.name}")
-        st.markdown(
-            '<div class="status-badge info">ℹ Already indexed — ready to query</div>',
-            unsafe_allow_html=True
-        )
+    uploaded_bytes = uploaded_file.getvalue()
+    with open(file_path, "wb") as f:
+        f.write(uploaded_bytes)
 
+    print(f"🔍 DEBUG: File uploaded: {uploaded_file.name}")
+    print(f"🔍 DEBUG: Saved to: {file_path} | Exists: {os.path.exists(file_path)}")
+    print(f"🔍 DEBUG: Saved size: {os.path.getsize(file_path)} bytes")
+
+    with st.spinner("Building vector index…"):
+        try:
+            print(f"🔍 DEBUG: Calling process_pdf({file_path})")
+
+            import shutil
+            if os.path.exists("vectorstore"):
+                shutil.rmtree("vectorstore")
+            os.makedirs("vectorstore", exist_ok=True)
+
+            process_pdf(file_path)
+
+            st.session_state["last_uploaded"] = uploaded_file.name
+            st.markdown(
+                '<div class="status-badge success">✓ Document indexed and ready</div>',
+                unsafe_allow_html=True
+            )
+        except Exception as e:
+            print(f"❌ DEBUG: process_pdf failed: {e}")
+            print(traceback.format_exc())
+            st.markdown(
+                f'<div class="status-badge error">✕ Failed to process: {e}</div>',
+                unsafe_allow_html=True
+            )
 st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ── Chat Section ──────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
     st.session_state.history = []
 
@@ -421,19 +412,31 @@ if submitted and query.strip():
         )
     else:
         pdf_name = st.session_state.get("last_uploaded", "")
+        file_hash = st.session_state.get("file_hash", "")
+
         print(f"🔍 DEBUG: Query = '{query}'")
         print(f"🔍 DEBUG: pdf_name = '{pdf_name}'")
+        print(f"🔍 DEBUG: file_hash = '{file_hash}'")
         print(f"🔍 DEBUG: GEMINI_API_KEY present = {bool(os.environ.get('GEMINI_API_KEY'))}")
+
         with st.spinner("Thinking…"):
             try:
-                print("🔍 DEBUG: Calling query_pipeline...")
-                answer = retrieve(query)
+                cached = get_cache(query, pdf_name, file_hash)
+                if cached:
+                    answer = cached
+                    print("🔍 DEBUG: Returned answer from cache")
+                else:
+                    print("🔍 DEBUG: Calling retrieve...")
+                    answer = retriever.retrieve(query)
+                    set_cache(query, pdf_name, file_hash, answer)
+                    print("✅ DEBUG: Answer cached")
+
                 print(f"🔍 DEBUG: Answer type = {type(answer)}")
                 print(f"🔍 DEBUG: Answer preview = {str(answer)[:150] if answer else 'NONE/EMPTY'}")
                 st.session_state.history.append({"q": query, "a": answer})
                 print("✅ DEBUG: Appended to history OK")
             except Exception as e:
-                print(f"❌ DEBUG: query_pipeline exception: {e}")
+                print(f"❌ DEBUG: retrieve exception: {e}")
                 print(traceback.format_exc())
                 st.markdown(
                     f'<div class="status-badge error">✕ Error: {e}</div>',
@@ -448,8 +451,6 @@ elif submitted and not query.strip():
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-
-# ── Conversation History ──────────────────────────────────────────────────────
 if st.session_state.history:
     turn_count = len(st.session_state.history)
     st.markdown(

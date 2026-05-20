@@ -1,3 +1,4 @@
+from llm import generate_answer
 import os
 import time
 import pickle
@@ -417,45 +418,21 @@ def build_context(results):
 # MAIN RETRIEVER
 # ─────────────────────────────────────────────────────────────
 def retrieve(query: str):
-    """
-    Full retrieval pipeline.
-    """
-
     print("\n" + "=" * 80)
     print("🚀 STARTING RETRIEVAL PIPELINE")
     print("=" * 80)
 
-    # Load vectorstore
     index, chunks = load_vectorstore()
-
-    # Exact match debug
     exact_match_debug(query, chunks)
+    semantic_results = semantic_search(query=query, index=index, chunks=chunks)
+    keyword_results = keyword_search(query=query, chunks=chunks)
+    final_results = merge_results(semantic_results, keyword_results)
 
-    # Semantic retrieval
-    semantic_results = semantic_search(
-        query=query,
-        index=index,
-        chunks=chunks,
-    )
+    if not final_results:
+        return "Not in document."
 
-    # Keyword retrieval
-    keyword_results = keyword_search(
-        query=query,
-        chunks=chunks,
-    )
-
-    # Merge
-    final_results = merge_results(
-        semantic_results,
-        keyword_results,
-    )
-
-    # Build context
     context = build_context(final_results)
-
-    print("\n✅ Retrieval Pipeline Complete")
-
-    return context
+    return generate_answer(query, context)
 
 def query_pipeline(query, pdfname=None):
     return retrieve(query)
@@ -464,7 +441,6 @@ def query_pipeline(query, pdfname=None):
 # TESTING
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-
     query = "how to change AS number in transport"
-
-    context = retrieve(query)
+    answer = retrieve(query)
+    print(answer)
